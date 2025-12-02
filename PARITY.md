@@ -2,7 +2,7 @@
 
 This document tracks the feature parity of `rust-lottie-skia` against the standard Lottie specification (supported by Skia/Skottie).
 
-**Overall Completion: ~60%**
+**Overall Completion: ~45%**
 
 ## 1. Shapes & Geometry (85%)
 Basic vector shapes and path construction.
@@ -26,7 +26,7 @@ Styling of vector shapes.
 - [x] **Line Join** (Miter, Round, Bevel)
 - [x] **Miter Limit**
 - [x] **Dashed Lines**
-- [ ] **Gradient Interpolation** (Smoothness control)
+- [ ] **Gradient Interpolation** (Smoothness control / Highlight Angle)
 
 ## 3. Shape Modifiers (40%)
 Procedural modifications to shapes.
@@ -41,20 +41,21 @@ Procedural modifications to shapes.
 - [ ] **Wiggle Paths**
 - [ ] **Merge Paths**
 
-## 4. Layers & Composition (80%)
+## 4. Layers & Composition (60%)
 Layer types and composition structure.
 
 - [x] **Shape Layer**
 - [x] **Solid Layer**
-- [x] **Image Layer** (Embedded & External)
+- [x] **Image Layer (External Files)**
+- [ ] **Image Layer (Embedded Base64)** (Stubbed in code, implementation missing)
 - [x] **Null Layer**
 - [x] **Pre-Composition** (Nested compositions)
 - [x] **Parenting** (Transform hierarchy)
-- [x] **Time Remapping** (Basic support via PreComp)
+- [ ] **Time Remapping** (Property `tm` is currently ignored)
 - [ ] **3D Layer** (Camera, Z-axis)
 - [ ] **Adjustment Layer**
 
-## 5. Masks & Mattes (90%)
+## 5. Masks & Mattes (80%)
 Visibility and compositing.
 
 - [x] **Mask Mode: Add**
@@ -62,7 +63,7 @@ Visibility and compositing.
 - [x] **Mask Mode: Intersect**
 - [ ] **Mask Mode: Lighten/Darken/Difference**
 - [x] **Mask Opacity**
-- [x] **Mask Expansion** (Not explicitly seen, but property exists)
+- [ ] **Mask Expansion** (Property `x` missing from data model)
 - [x] **Alpha Matte**
 - [x] **Alpha Inverted Matte**
 - [x] **Luma Matte**
@@ -113,13 +114,13 @@ Post-processing effects.
 - [ ] **Roughen Edges**
 - [ ] **Venetian Blinds**
 
-## 8. Animation & Interpolation (70%)
+## 8. Animation & Interpolation (50%)
 Keyframes and timing.
 
 - [x] **Linear Interpolation**
-- [x] **Bezier Interpolation** (Ease In/Out)
+- [x] **Bezier Interpolation** (Temporal Ease In/Out)
 - [x] **Hold Interpolation**
-- [x] **Spatial Bezier** (Curved motion paths)
+- [ ] **Spatial Bezier** (Curved motion paths supported by data model, but renderer uses Linear Lerp)
 - [ ] **Expressions** (JavaScript/Rhai scripting)
 
 ## 9. Audio (0%)
@@ -129,6 +130,7 @@ Sound playback.
 - [ ] **Audio Waveforms**
 
 ## 10. Optimization & Misc
-- [x] **Render Caching** (Skia Layer saving)
+- [x] **Layer Compositing** (Skia `saveLayer` for Mattes/Effects)
+- [ ] **Render Caching** (Bitmap caching of static sub-trees)
 - [ ] **Marker Support**
 - [ ] **Metadata**
