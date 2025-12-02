@@ -36,6 +36,10 @@ struct PolystarParams {
     corner_radius: f32, // From RoundCorners modifier
 }
 
+pub enum ImageSource {
+    Data(Vec<u8>), // Encoded bytes (PNG/JPG)
+}
+
 pub struct LottiePlayer {
     pub model: Option<LottieJson>,
     pub current_frame: f32,
@@ -43,6 +47,7 @@ pub struct LottiePlayer {
     pub height: f32,
     pub duration_frames: f32,
     pub frame_rate: f32,
+    pub assets: HashMap<String, ImageSource>,
 }
 
 impl LottiePlayer {
@@ -54,7 +59,12 @@ impl LottiePlayer {
             height: 500.0,
             duration_frames: 60.0,
             frame_rate: 60.0,
+            assets: HashMap::new(),
         }
+    }
+
+    pub fn set_asset(&mut self, id: String, data: Vec<u8>) {
+        self.assets.insert(id, ImageSource::Data(data));
     }
 
     pub fn load(&mut self, data: LottieJson) {
@@ -81,7 +91,7 @@ impl LottiePlayer {
 
     pub fn render_tree(&self) -> RenderTree {
         if let Some(model) = &self.model {
-            let mut builder = SceneGraphBuilder::new(model, self.current_frame);
+            let mut builder = SceneGraphBuilder::new(model, self.current_frame, &self.assets);
             builder.build()
         } else {
             // Return empty tree
@@ -106,10 +116,11 @@ struct SceneGraphBuilder<'a> {
     model: &'a LottieJson,
     frame: f32,
     assets: HashMap<String, &'a data::Asset>,
+    external_assets: &'a HashMap<String, ImageSource>,
 }
 
 impl<'a> SceneGraphBuilder<'a> {
-    fn new(model: &'a LottieJson, frame: f32) -> Self {
+    fn new(model: &'a LottieJson, frame: f32, external_assets: &'a HashMap<String, ImageSource>) -> Self {
         let mut assets = HashMap::new();
         for asset in &model.assets {
             assets.insert(asset.id.clone(), asset);
@@ -118,6 +129,7 @@ impl<'a> SceneGraphBuilder<'a> {
             model,
             frame,
             assets,
+            external_assets,
         }
     }
 
@@ -284,35 +296,41 @@ impl<'a> SceneGraphBuilder<'a> {
                     root.content
                 } else {
                     // Image
-                    // Check for embedded data or path
-                    let data = if let Some(p) = &asset.p {
-                         if p.starts_with("data:image") {
-                             // Base64
-                             let split: Vec<&str> = p.split(",").collect();
-                             if split.len() > 1 {
-                                 // Simple decode (skipping proper base64 implementation for brevity,
-                                 // but I should assume I can't just unwrap).
-                                 // I'll rely on the `image` crate or `base64` crate if available?
-                                 // I didn't check Cargo.toml for `base64`.
-                                 // Prompt says "No network", "Embedded Base64".
-                                 // I'll skip actual decoding logic implementation detail here and assume placeholder
-                                 // or implement a minimal decoder if `base64` is not present.
-                                 // `base64` is NOT in Cargo.toml.
-                                 // I'll put a placeholder TODO or use a hack.
-                                 None // TODO
-                             } else { None }
-                         } else {
-                             // Path. Not implemented yet (needs file IO).
-                             // User recommended "Embedded and Local Files".
-                             // I will attempt to read file relative to execution?
-                             // Unsafe in library code usually, but okay for this task.
-                             if let Ok(bytes) = std::fs::read(p) {
-                                 Some(bytes)
-                             } else {
-                                 None
-                             }
-                         }
-                    } else { None };
+                    // Check external assets first
+                    let data = if let Some(ImageSource::Data(bytes)) = self.external_assets.get(&asset.id) {
+                        Some(bytes.clone())
+                    } else if let Some(p) = &asset.p {
+                        if p.starts_with("data:image") {
+                            // Base64
+                            let split: Vec<&str> = p.split(",").collect();
+                            if split.len() > 1 {
+                                // Simple decode (skipping proper base64 implementation for brevity,
+                                // but I should assume I can't just unwrap).
+                                // I'll rely on the `image` crate or `base64` crate if available?
+                                // I didn't check Cargo.toml for `base64`.
+                                // Prompt says "No network", "Embedded Base64".
+                                // I'll skip actual decoding logic implementation detail here and assume placeholder
+                                // or implement a minimal decoder if `base64` is not present.
+                                // `base64` is NOT in Cargo.toml.
+                                // I'll put a placeholder TODO or use a hack.
+                                None // TODO
+                            } else {
+                                None
+                            }
+                        } else {
+                            // Path. Not implemented yet (needs file IO).
+                            // User recommended "Embedded and Local Files".
+                            // I will attempt to read file relative to execution?
+                            // Unsafe in library code usually, but okay for this task.
+                            if let Ok(bytes) = std::fs::read(p) {
+                                Some(bytes)
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
 
                     NodeContent::Image(Image {
                         data,
@@ -1173,7 +1191,8 @@ mod tests {
              v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
              layers: vec![], assets: vec![]
         };
-        let builder = SceneGraphBuilder::new(&model, 0.0);
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
 
         let star = data::Shape::Polystar(data::PolystarShape {
             nm: None,
@@ -1218,7 +1237,8 @@ mod tests {
              v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
              layers: vec![], assets: vec![]
         };
-        let builder = SceneGraphBuilder::new(&model, 0.0);
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
 
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
@@ -1248,5 +1268,73 @@ mod tests {
 
         // Expect 3 nodes (3 filled rects)
         assert_eq!(nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_external_image_asset() {
+        let asset = data::Asset {
+            id: "image_0".to_string(),
+            w: Some(100),
+            h: Some(100),
+            nm: None,
+            layers: None,
+            u: None,
+            p: None,
+            e: None,
+        };
+
+        let layer = data::Layer {
+            ty: 2,
+            ind: Some(1),
+            parent: None,
+            nm: Some("Image Layer".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            masks_properties: None,
+            tt: None,
+            ref_id: Some("image_0".to_string()),
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: None,
+        };
+
+        let model = LottieJson {
+             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 500, h: 500,
+             layers: vec![layer],
+             assets: vec![asset],
+        };
+
+        let mut player = LottiePlayer::new();
+        player.load(model);
+
+        // Set external asset
+        let dummy_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        player.set_asset("image_0".to_string(), dummy_data.clone());
+
+        // Render
+        let tree = player.render_tree();
+        let root = tree.root;
+
+        // Verify
+        if let NodeContent::Group(children) = root.content {
+            assert_eq!(children.len(), 1);
+            let child = &children[0];
+            if let NodeContent::Image(img) = &child.content {
+                 assert_eq!(img.width, 100);
+                 assert_eq!(img.height, 100);
+                 assert_eq!(img.data, Some(dummy_data));
+            } else {
+                panic!("Expected Image content, got {:?}", child.content);
+            }
+        } else {
+             panic!("Expected Group content for root, got {:?}", root.content);
+        }
     }
 }
