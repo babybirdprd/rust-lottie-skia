@@ -67,12 +67,33 @@ pub struct RenderNode {
 pub enum NodeContent {
     Group(Vec<RenderNode>),
     Shape(Shape),
+    Text(Text),
+    Image(Image),
 }
 
 pub struct Shape {
     pub geometry: BezPath,
     pub fill: Option<Fill>,
     pub stroke: Option<Stroke>,
+}
+
+pub struct Text {
+    pub content: String,
+    // Simple font handling: family name
+    pub font_family: String,
+    pub size: f32,
+    pub justify: Justification,
+    pub tracking: f32,
+    pub line_height: f32,
+    pub fill: Option<Fill>,
+    pub stroke: Option<Stroke>,
+}
+
+pub struct Image {
+    // Encoded image data (e.g. PNG, JPEG)
+    pub data: Option<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub struct Fill {
@@ -140,9 +161,44 @@ pub enum Effect {
         offset: Vec2,
         blur: f32,
     },
+    ColorMatrix {
+        matrix: [f32; 20],
+    },
+    DisplacementMap {
+        // Defines the displacement map source.
+        // Ideally this should be a reference to another layer or an image,
+        // but for now we assume it's implicit or handled by the renderer via input chaining
+        // if the Lottie structure implies it. However, Lottie displacement maps use a specific layer.
+        // Here we'll assume the map is provided as a separate RenderNode or similar.
+        // To simplify for this task and match typical Skia filter inputs (which take an input filter),
+        // we might need to know *what* to use as the displacement map.
+        // BUT, since we are defining the *data* struct, we should hold the data.
+        // Let's assume the displacement map layer's content is rendered and passed here?
+        // Or maybe just the parameters?
+        // The spec says: "Displacement Map: image_filters::displacement_map."
+        // We'll stick to parameters.
+        scale: f32,
+        x_channel: ColorChannel,
+        y_channel: ColorChannel,
+    },
 }
 
 // Enums
+#[derive(Clone, Copy, Debug)]
+pub enum ColorChannel {
+    R,
+    G,
+    B,
+    A,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Justification {
+    Left,
+    Right,
+    Center,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum BlendMode {
     Normal,

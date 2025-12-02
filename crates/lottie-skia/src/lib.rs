@@ -1,14 +1,15 @@
 use glam::{Mat3, Vec4};
 use kurbo::{BezPath, PathEl};
 use lottie_core::{
-    BlendMode as CoreBlendMode, Effect, FillRule as CoreFillRule, GradientKind,
-    LineCap as CoreLineCap, LineJoin as CoreLineJoin, MaskMode, MatteMode, NodeContent,
-    Paint as CorePaint, RenderNode, RenderTree,
+    BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
+    GradientKind, Justification, LineCap as CoreLineCap, LineJoin as CoreLineJoin, MatteMode,
+    NodeContent, Paint as CorePaint, RenderNode, RenderTree,
 };
+use skia_safe::color_filters::Clamp;
 use skia_safe::{
-    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, ClipOp,
-    Color, Color4f, Matrix, Paint, PaintStyle, Path, PathEffect, PathFillType, Point, Rect,
-    TileMode,
+    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, Color,
+    Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
+    PaintStyle, Path, PathEffect, PathFillType, Point, Rect, TextBlob, TileMode,
 };
 
 pub struct SkiaRenderer;
@@ -55,19 +56,6 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     let matrix = glam_to_skia_matrix(node.transform);
     canvas.concat(&matrix);
 
-    // Masks
-    // 4.4.1 Masks
-    for mask in &node.masks {
-        let path = kurbo_to_skia_path(&mask.geometry);
-        let op = match mask.mode {
-            MaskMode::Add | MaskMode::Intersect => ClipOp::Intersect,
-            MaskMode::Subtract => ClipOp::Difference,
-            // Fallbacks
-            _ => ClipOp::Intersect,
-        };
-        canvas.clip_path(&path, op, true);
-    }
-
     // Determine opacity
     let node_alpha = sanitize(node.alpha * parent_alpha);
 
@@ -104,8 +92,27 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                         let dx = sanitize(offset.x);
                         let dy = sanitize(offset.y);
                         let b = sanitize(*blur);
-                        image_filters::drop_shadow((dx, dy), (b, b), c, filter.clone(), None)
+                        image_filters::drop_shadow((dx, dy), (b, b), c, None, filter, None)
                     }
+                    Effect::ColorMatrix { matrix } => image_filters::color_filter(
+                        color_filters::matrix_row_major(matrix, Clamp::Yes),
+                        filter,
+                        None,
+                    ),
+                    Effect::DisplacementMap {
+                        scale,
+                        x_channel,
+                        y_channel,
+                    } => image_filters::displacement_map(
+                        (
+                            convert_color_channel(*x_channel),
+                            convert_color_channel(*y_channel),
+                        ),
+                        sanitize(*scale),
+                        None,
+                        filter,
+                        None,
+                    ),
                 };
                 filter = next_filter;
             }
@@ -134,7 +141,8 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                              0.0, 0.0, 0.0, 0.0, 0.0,
                              0.2126, 0.7152, 0.0722, 0.0, 0.0,
                          ];
-                        matte_paint.set_color_filter(color_filters::matrix_row_major(&matrix));
+                        matte_paint
+                            .set_color_filter(color_filters::matrix_row_major(&matrix, Clamp::Yes));
                         BlendMode::DstIn
                     }
                     MatteMode::LumaInverted => {
@@ -147,7 +155,8 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                              0.0, 0.0, 0.0, 0.0, 0.0,
                              -0.2126, -0.7152, -0.0722, 0.0, 1.0,
                          ];
-                        matte_paint.set_color_filter(color_filters::matrix_row_major(&matrix));
+                        matte_paint
+                            .set_color_filter(color_filters::matrix_row_major(&matrix, Clamp::Yes));
                         BlendMode::DstIn
                     }
                 };
@@ -219,6 +228,85 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
 
                 setup_paint_shader(&mut paint, &stroke.paint);
                 canvas.draw_path(&path, &paint);
+            }
+        }
+        NodeContent::Text(text) => {
+            let font_mgr = FontMgr::new();
+            // Try to match family, fallback to empty string (default)
+            let typeface = font_mgr
+                .match_family_style(&text.font_family, FontStyle::normal())
+                .or_else(|| font_mgr.match_family_style("", FontStyle::normal()));
+
+            if let Some(typeface) = typeface {
+                let font = Font::new(typeface, Some(text.size));
+
+                // Handle multi-line text
+                let lines = text.content.split('\n');
+                let mut current_y = 0.0; // Start at baseline of first line? Or top? Lottie usually implies baseline.
+
+                for line in lines {
+                    if let Some(blob) = TextBlob::from_str(line, &font) {
+                        let width = font.measure_str(line, None).0;
+                        let x = match text.justify {
+                            Justification::Left => 0.0,
+                            Justification::Center => -width / 2.0,
+                            Justification::Right => -width,
+                        };
+
+                        // Draw Fill
+                        if let Some(fill) = &text.fill {
+                            let mut paint = Paint::default();
+                            paint.set_style(PaintStyle::Fill);
+                            paint.set_alpha_f(sanitize(fill.opacity * alpha));
+                            setup_paint_shader(&mut paint, &fill.paint);
+                            canvas.draw_text_blob(&blob, (x, current_y), &paint);
+                        }
+
+                        // Draw Stroke
+                        if let Some(stroke) = &text.stroke {
+                            let mut paint = Paint::default();
+                            paint.set_style(PaintStyle::Stroke);
+                            paint.set_alpha_f(sanitize(stroke.opacity * alpha));
+                            paint.set_stroke_width(sanitize(stroke.width));
+                            setup_paint_shader(&mut paint, &stroke.paint);
+                            canvas.draw_text_blob(&blob, (x, current_y), &paint);
+                        }
+                    }
+                    current_y += text.line_height;
+                }
+            }
+        }
+        NodeContent::Image(image) => {
+            let mut drawn = false;
+            if let Some(data) = &image.data {
+                // Attempt to decode image
+                let sk_data = Data::new_copy(data);
+                if let Some(img) = SkImage::from_encoded(sk_data) {
+                    let mut paint = Paint::default();
+                    paint.set_alpha_f(alpha);
+
+                    let src = Rect::from_wh(img.width() as f32, img.height() as f32);
+                    let dst = Rect::from_wh(image.width as f32, image.height as f32);
+                    // Use Strict constraint
+                    canvas.draw_image_rect(
+                        img,
+                        Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
+                        dst,
+                        &paint,
+                    );
+                    drawn = true;
+                }
+            }
+
+            if !drawn {
+                // Placeholder: Magenta Rectangle
+                let mut paint = Paint::default();
+                paint.set_color(Color::MAGENTA);
+                paint.set_style(PaintStyle::Fill);
+                canvas.draw_rect(
+                    Rect::from_wh(image.width as f32, image.height as f32),
+                    &paint,
+                );
             }
         }
     }
@@ -374,5 +462,14 @@ fn convert_join(join: CoreLineJoin) -> skia_safe::PaintJoin {
         CoreLineJoin::Miter => skia_safe::PaintJoin::Miter,
         CoreLineJoin::Round => skia_safe::PaintJoin::Round,
         CoreLineJoin::Bevel => skia_safe::PaintJoin::Bevel,
+    }
+}
+
+fn convert_color_channel(c: CoreColorChannel) -> ColorChannel {
+    match c {
+        CoreColorChannel::R => ColorChannel::R,
+        CoreColorChannel::G => ColorChannel::G,
+        CoreColorChannel::B => ColorChannel::B,
+        CoreColorChannel::A => ColorChannel::A,
     }
 }
