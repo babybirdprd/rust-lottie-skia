@@ -228,6 +228,7 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                 let mut path_effect = None;
 
                 if let Some(dash) = &stroke.dash {
+                    eprintln!("Applying Dash Pattern: {:?}", dash);
                     let mut array: Vec<f32> = dash.array.iter().map(|&v| sanitize(v)).collect();
                     if array.len() % 2 != 0 {
                         let clone = array.clone();
@@ -344,6 +345,7 @@ fn setup_paint_shader(paint: &mut Paint, core_paint: &CorePaint) {
             paint.set_color4f(c, None);
         }
         CorePaint::Gradient(grad) => {
+            eprintln!("Creating Gradient Shader: {:?}", grad.kind);
             let colors: Vec<Color> = grad
                 .stops
                 .iter()
