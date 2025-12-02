@@ -101,7 +101,13 @@ fn main() {
 
     // Player init
     let mut player = LottiePlayer::new();
-    let lottie: LottieJson = serde_json::from_str(SAMPLE_LOTTIE).unwrap();
+    let args: Vec<String> = std::env::args().collect();
+    let lottie: LottieJson = if args.len() > 1 {
+        let content = std::fs::read_to_string(&args[1]).expect("Failed to read file");
+        serde_json::from_str(&content).expect("Failed to parse JSON")
+    } else {
+        serde_json::from_str(SAMPLE_LOTTIE).unwrap()
+    };
     player.load(lottie);
 
     let mut last_frame = Instant::now();
