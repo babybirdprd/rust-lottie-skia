@@ -67,3 +67,4 @@ perf.data.old
 # Benchmark Results
 criterion/
 bench_results/
+repomix-output.xml
