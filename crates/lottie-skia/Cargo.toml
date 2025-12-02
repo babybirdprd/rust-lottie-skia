@@ -6,3 +6,5 @@ edition.workspace = true
 [dependencies]
 lottie-core.workspace = true
 skia-safe.workspace = true
+glam.workspace = true
+kurbo.workspace = true
