@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 lottie-skia.workspace = true
 lottie-core.workspace = true
+lottie-data.workspace = true
 skia-safe.workspace = true
 winit = "0.29"
 softbuffer = "0.4"
+serde.workspace = true
+serde_json.workspace = true

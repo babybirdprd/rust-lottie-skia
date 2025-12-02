@@ -34,6 +34,7 @@ impl RenderTree {
                 miter_limit: None,
                 dash: None,
             }),
+            trim: None,
         };
 
         let root = RenderNode {
@@ -75,6 +76,14 @@ pub struct Shape {
     pub geometry: BezPath,
     pub fill: Option<Fill>,
     pub stroke: Option<Stroke>,
+    pub trim: Option<Trim>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Trim {
+    pub start: f32,  // 0.0 to 1.0
+    pub end: f32,    // 0.0 to 1.0
+    pub offset: f32, // 0.0 to 1.0 (usually)
 }
 
 pub struct Text {
