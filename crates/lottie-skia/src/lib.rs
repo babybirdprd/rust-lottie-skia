@@ -2,14 +2,14 @@ use glam::{Mat3, Vec4};
 use kurbo::{BezPath, PathEl};
 use lottie_core::{
     BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
-    GradientKind, Justification, LineCap as CoreLineCap, LineJoin as CoreLineJoin, MatteMode,
-    NodeContent, Paint as CorePaint, RenderNode, RenderTree,
+    GradientKind, Justification, LineCap as CoreLineCap, LineJoin as CoreLineJoin,
+    MaskMode as CoreMaskMode, MatteMode, NodeContent, Paint as CorePaint, RenderNode, RenderTree,
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
-    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, Color,
-    Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
-    PaintStyle, Path, PathEffect, PathFillType, Point, Rect, TextBlob, TileMode,
+    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas,
+    ClipOp, Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix,
+    Paint, PaintStyle, Path, PathEffect, PathFillType, PathOp, Point, Rect, TextBlob, TileMode,
 };
 
 pub struct SkiaRenderer;
@@ -55,6 +55,9 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     // Transform
     let matrix = glam_to_skia_matrix(node.transform);
     canvas.concat(&matrix);
+
+    // Masks
+    apply_masks(canvas, &node.masks);
 
     // Determine opacity
     let node_alpha = sanitize(node.alpha * parent_alpha);
@@ -334,6 +337,53 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     &paint,
                 );
             }
+        }
+    }
+}
+
+fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
+    if masks.is_empty() {
+        return;
+    }
+
+    // 1. Combine "Add" masks
+    let mut add_path = Path::new();
+    let mut has_add = false;
+
+    for mask in masks {
+        if let CoreMaskMode::Add = mask.mode {
+            let path = kurbo_to_skia_path(&mask.geometry);
+            if !has_add {
+                add_path = path;
+                has_add = true;
+            } else {
+                if let Some(result) = add_path.op(&path, PathOp::Union) {
+                    add_path = result;
+                } else {
+                    // Fallback if op fails
+                    add_path.add_path(&path, (0.0, 0.0), None);
+                }
+            }
+        }
+    }
+
+    if has_add {
+        canvas.clip_path(&add_path, ClipOp::Intersect, true);
+    }
+
+    // 2. Apply others
+    for mask in masks {
+        match mask.mode {
+            CoreMaskMode::Add => { /* Already handled */ }
+            CoreMaskMode::Subtract => {
+                let path = kurbo_to_skia_path(&mask.geometry);
+                canvas.clip_path(&path, ClipOp::Difference, true);
+            }
+            CoreMaskMode::Intersect => {
+                let path = kurbo_to_skia_path(&mask.geometry);
+                canvas.clip_path(&path, ClipOp::Intersect, true);
+            }
+            _ => { /* Lighten, Darken, Difference ignored for clip */ }
         }
     }
 }

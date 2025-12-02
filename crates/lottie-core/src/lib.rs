@@ -6,7 +6,7 @@ use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, Point, Shape as _};
 use lottie_data::model::{self as data, LottieJson};
 pub use renderer::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 
 #[derive(Clone)]
@@ -134,7 +134,6 @@ impl<'a> SceneGraphBuilder<'a> {
         // Iterate in reverse for painter's algorithm (bottom layers first)
         // Lottie: index 0 is top.
         // We want to draw bottom layer first. So iterate layers.len()-1 down to 0.
-        // BUT, we need to resolve parenting.
 
         let mut nodes = Vec::new();
 
@@ -146,8 +145,50 @@ impl<'a> SceneGraphBuilder<'a> {
             }
         }
 
+        let mut consumed_indices = HashSet::new();
+        let len = layers.len();
+
         // Render order: Bottom (last in list) to Top (first in list)
-        for layer in layers.iter().rev() {
+        for i in (0..len).rev() {
+            if consumed_indices.contains(&i) {
+                continue;
+            }
+
+            let layer = &layers[i];
+
+            // Track Mattes
+            // If this layer has 'tt', it uses the layer ABOVE it (index i - 1) as the matte.
+            // We must process that matte layer and attach it to this layer's node.
+            // Then mark the matte layer as consumed so it isn't rendered separately.
+            if let Some(tt) = layer.tt {
+                if i > 0 {
+                    let matte_idx = i - 1;
+                    // Ensure matte hasn't been consumed (unlikely in this loop unless recursive mattes?)
+                    if !consumed_indices.contains(&matte_idx) {
+                        consumed_indices.insert(matte_idx);
+                        let matte_layer = &layers[matte_idx];
+
+                        if let Some(mut content_node) = self.process_layer(layer, &layer_map) {
+                            if let Some(matte_node) = self.process_layer(matte_layer, &layer_map) {
+                                let mode = match tt {
+                                    1 => MatteMode::Alpha,
+                                    2 => MatteMode::AlphaInverted,
+                                    3 => MatteMode::Luma,
+                                    4 => MatteMode::LumaInverted,
+                                    _ => MatteMode::Alpha,
+                                };
+                                content_node.matte = Some(Box::new(Matte {
+                                    mode,
+                                    node: matte_node,
+                                }));
+                            }
+                            nodes.push(content_node);
+                        }
+                        continue;
+                    }
+                }
+            }
+
             if let Some(node) = self.process_layer(layer, &layer_map) {
                 nodes.push(node);
             }
@@ -316,12 +357,19 @@ impl<'a> SceneGraphBuilder<'a> {
             NodeContent::Group(vec![])
         };
 
+        // Masks
+        let masks = if let Some(props) = &layer.masks_properties {
+            self.process_masks(props, self.frame - layer.st)
+        } else {
+            vec![]
+        };
+
         Some(RenderNode {
             transform,
             alpha: opacity,
             blend_mode: BlendMode::Normal, // Map blend mode
             content,
-            masks: vec![],
+            masks,
             matte: None,
             effects: vec![],
         })
@@ -900,6 +948,10 @@ impl<'a> SceneGraphBuilder<'a> {
 
     fn convert_path(&self, p: &data::PathShape) -> BezPath {
         let path_data = Animator::resolve(&p.ks, 0.0, |v| v.clone(), data::BezierPath::default());
+        self.convert_bezier_path(&path_data)
+    }
+
+    fn convert_bezier_path(&self, path_data: &data::BezierPath) -> BezPath {
         let mut bp = BezPath::new();
         if path_data.v.is_empty() {
             return bp;
@@ -916,8 +968,16 @@ impl<'a> SceneGraphBuilder<'a> {
 
             let p0 = path_data.v[i];
             let p1 = path_data.v[next_idx];
-            let cp1 = [p0[0] + path_data.o[i][0], p0[1] + path_data.o[i][1]];
-            let cp2 = [p1[0] + path_data.i[next_idx][0], p1[1] + path_data.i[next_idx][1]];
+
+            let o = if i < path_data.o.len() { path_data.o[i] } else { [0.0, 0.0] };
+            let in_ = if next_idx < path_data.i.len() {
+                path_data.i[next_idx]
+            } else {
+                [0.0, 0.0]
+            };
+
+            let cp1 = [p0[0] + o[0], p0[1] + o[1]];
+            let cp2 = [p1[0] + in_[0], p1[1] + in_[1]];
 
             bp.curve_to(
                 Point::new(cp1[0] as f64, cp1[1] as f64),
@@ -930,6 +990,33 @@ impl<'a> SceneGraphBuilder<'a> {
             bp.close_path();
         }
         bp
+    }
+
+    fn process_masks(&self, masks_props: &[data::MaskProperties], frame: f32) -> Vec<Mask> {
+        let mut masks = Vec::new();
+        for m in masks_props {
+            // Check mode
+            let mode = match m.mode.as_deref() {
+                Some("a") => MaskMode::Add,
+                Some("s") => MaskMode::Subtract,
+                Some("i") => MaskMode::Intersect,
+                Some("l") => MaskMode::Lighten,
+                Some("d") => MaskMode::Darken,
+                Some("f") => MaskMode::Difference,
+                _ => continue, // Skip unknown or None
+            };
+
+            let path_data = Animator::resolve(&m.pt, frame, |v| v.clone(), data::BezierPath::default());
+            let geometry = self.convert_bezier_path(&path_data);
+            let opacity = Animator::resolve(&m.o, frame, |v| *v / 100.0, 1.0);
+
+            masks.push(Mask {
+                mode,
+                geometry,
+                opacity,
+            });
+        }
+        masks
     }
 }
 
