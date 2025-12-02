@@ -529,10 +529,134 @@ impl<'a> SceneGraphBuilder<'a> {
                         });
                     }
                 }
+                data::Shape::GradientFill(gf) => {
+                    let start = Animator::resolve(&gf.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let end = Animator::resolve(&gf.e, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let opacity = Animator::resolve(&gf.o, 0.0, |v| *v / 100.0, 1.0);
+
+                    let raw_stops = Animator::resolve(&gf.g.k, 0.0, |v| v.clone(), Vec::new());
+                    let stops = parse_gradient_stops(&raw_stops, gf.g.p as usize);
+
+                    let kind = if gf.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
+
+                    for geom in &active_geometries {
+                        let path = self.convert_geometry(geom);
+                        processed_nodes.push(RenderNode {
+                            transform: Mat3::IDENTITY,
+                            alpha: 1.0,
+                            blend_mode: BlendMode::Normal,
+                            content: NodeContent::Shape(renderer::Shape {
+                                geometry: path,
+                                fill: Some(Fill {
+                                    paint: Paint::Gradient(Gradient {
+                                        kind,
+                                        stops: stops.clone(),
+                                        start,
+                                        end,
+                                    }),
+                                    opacity,
+                                    rule: FillRule::NonZero,
+                                }),
+                                stroke: None,
+                                trim: trim.clone(),
+                            }),
+                            masks: vec![],
+                            matte: None,
+                            effects: vec![],
+                        });
+                    }
+                }
+                data::Shape::GradientStroke(gs) => {
+                    let start = Animator::resolve(&gs.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let end = Animator::resolve(&gs.e, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let width = Animator::resolve(&gs.w, 0.0, |v| *v, 1.0);
+                    let opacity = Animator::resolve(&gs.o, 0.0, |v| *v / 100.0, 1.0);
+
+                    let raw_stops = Animator::resolve(&gs.g.k, 0.0, |v| v.clone(), Vec::new());
+                    let stops = parse_gradient_stops(&raw_stops, gs.g.p as usize);
+
+                    let kind = if gs.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
+
+                    let mut dash = None;
+                    if !gs.d.is_empty() {
+                         let mut array = Vec::new();
+                         let mut offset = 0.0;
+                         for prop in &gs.d {
+                             match prop.n.as_deref() {
+                                 Some("o") => offset = Animator::resolve(&prop.v, 0.0, |v| *v, 0.0),
+                                 Some("d") | Some("g") => array.push(Animator::resolve(&prop.v, 0.0, |v| *v, 0.0)),
+                                 _ => {}
+                             }
+                         }
+                         if !array.is_empty() {
+                             if array.len() % 2 != 0 {
+                                 let clone = array.clone();
+                                 array.extend(clone);
+                             }
+                             dash = Some(DashPattern { array, offset });
+                         }
+                    }
+
+                    for geom in &active_geometries {
+                        let path = self.convert_geometry(geom);
+                        processed_nodes.push(RenderNode {
+                            transform: Mat3::IDENTITY,
+                            alpha: 1.0,
+                            blend_mode: BlendMode::Normal,
+                            content: NodeContent::Shape(renderer::Shape {
+                                geometry: path,
+                                fill: None,
+                                stroke: Some(Stroke {
+                                    paint: Paint::Gradient(Gradient {
+                                        kind,
+                                        stops: stops.clone(),
+                                        start,
+                                        end,
+                                    }),
+                                    width,
+                                    opacity,
+                                    cap: match gs.lc { 1 => LineCap::Butt, 3 => LineCap::Square, _ => LineCap::Round },
+                                    join: match gs.lj { 1 => LineJoin::Miter, 3 => LineJoin::Bevel, _ => LineJoin::Round },
+                                    miter_limit: gs.ml,
+                                    dash: dash.clone(),
+                                }),
+                                trim: trim.clone(),
+                            }),
+                            masks: vec![],
+                            matte: None,
+                            effects: vec![],
+                        });
+                    }
+                }
                 data::Shape::Stroke(s) => {
                     let color = Animator::resolve(&s.c, 0.0, |v| Vec4::from_slice(v), Vec4::ONE);
                     let width = Animator::resolve(&s.w, 0.0, |v| *v, 1.0);
                     let opacity = Animator::resolve(&s.o, 0.0, |v| *v / 100.0, 1.0);
+
+                    let mut dash = None;
+                    if !s.d.is_empty() {
+                        let mut array = Vec::new();
+                        let mut offset = 0.0;
+                        for prop in &s.d {
+                             match prop.n.as_deref() {
+                                 Some("o") => {
+                                     offset = Animator::resolve(&prop.v, 0.0, |v| *v, 0.0);
+                                 }
+                                 Some("d") | Some("g") => {
+                                     array.push(Animator::resolve(&prop.v, 0.0, |v| *v, 0.0));
+                                 }
+                                 _ => {}
+                             }
+                        }
+                        if !array.is_empty() {
+                             if array.len() % 2 != 0 {
+                                 let clone = array.clone();
+                                 array.extend(clone);
+                             }
+                            dash = Some(DashPattern { array, offset });
+                        }
+                    }
+
                     for geom in &active_geometries {
                         let path = self.convert_geometry(geom);
                         processed_nodes.push(RenderNode {
@@ -546,10 +670,10 @@ impl<'a> SceneGraphBuilder<'a> {
                                     paint: Paint::Solid(color),
                                     width,
                                     opacity,
-                                    cap: LineCap::Round,
-                                    join: LineJoin::Round,
-                                    miter_limit: None,
-                                    dash: None,
+                                    cap: match s.lc { 1 => LineCap::Butt, 3 => LineCap::Square, _ => LineCap::Round },
+                                    join: match s.lj { 1 => LineJoin::Miter, 3 => LineJoin::Bevel, _ => LineJoin::Round },
+                                    miter_limit: s.ml,
+                                    dash: dash.clone(),
                                 }),
                                 trim: trim.clone(),
                             }),
@@ -810,6 +934,146 @@ impl<'a> SceneGraphBuilder<'a> {
 }
 
 // Helpers
+
+struct ColorStop {
+    t: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+}
+
+struct AlphaStop {
+    t: f32,
+    a: f32,
+}
+
+fn parse_gradient_stops(raw: &[f32], color_count: usize) -> Vec<GradientStop> {
+    let mut stops = Vec::new();
+    if raw.is_empty() {
+        return stops;
+    }
+
+    let mut color_stops = Vec::new();
+    let mut alpha_stops = Vec::new();
+
+    let color_data_len = color_count * 4;
+    // Parse Colors
+    for chunk in raw.iter().take(color_data_len).collect::<Vec<_>>().chunks(4) {
+        if chunk.len() == 4 {
+            color_stops.push(ColorStop {
+                t: *chunk[0],
+                r: *chunk[1],
+                g: *chunk[2],
+                b: *chunk[3],
+            });
+        }
+    }
+
+    // Parse Alphas
+    if raw.len() > color_data_len {
+        for chunk in raw[color_data_len..].chunks(2) {
+            if chunk.len() == 2 {
+                alpha_stops.push(AlphaStop {
+                    t: chunk[0],
+                    a: chunk[1],
+                });
+            }
+        }
+    }
+
+    // If no alpha stops, just return colors (with alpha 1.0)
+    if alpha_stops.is_empty() {
+        for c in color_stops {
+            stops.push(GradientStop {
+                offset: c.t,
+                color: Vec4::new(c.r, c.g, c.b, 1.0),
+            });
+        }
+        return stops;
+    }
+
+    // If we have alphas, we need to merge.
+    let mut unique_t: Vec<f32> = Vec::new();
+    for c in &color_stops {
+        unique_t.push(c.t);
+    }
+    for a in &alpha_stops {
+        unique_t.push(a.t);
+    }
+    unique_t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    unique_t.dedup();
+
+    for t in unique_t {
+        let (r, g, b) = interpolate_color(&color_stops, t);
+        let a = interpolate_alpha(&alpha_stops, t);
+
+        stops.push(GradientStop {
+            offset: t,
+            color: Vec4::new(r, g, b, a),
+        });
+    }
+
+    stops
+}
+
+fn interpolate_color(stops: &[ColorStop], t: f32) -> (f32, f32, f32) {
+    if stops.is_empty() {
+        return (1.0, 1.0, 1.0);
+    }
+    if t <= stops[0].t {
+        return (stops[0].r, stops[0].g, stops[0].b);
+    }
+    if t >= stops.last().unwrap().t {
+        let last = stops.last().unwrap();
+        return (last.r, last.g, last.b);
+    }
+
+    for i in 0..stops.len() - 1 {
+        let s1 = &stops[i];
+        let s2 = &stops[i + 1];
+        if t >= s1.t && t <= s2.t {
+            let range = s2.t - s1.t;
+            let ratio = if range == 0.0 {
+                0.0
+            } else {
+                (t - s1.t) / range
+            };
+            return (
+                s1.r + (s2.r - s1.r) * ratio,
+                s1.g + (s2.g - s1.g) * ratio,
+                s1.b + (s2.b - s1.b) * ratio,
+            );
+        }
+    }
+    (1.0, 1.0, 1.0)
+}
+
+fn interpolate_alpha(stops: &[AlphaStop], t: f32) -> f32 {
+    if stops.is_empty() {
+        return 1.0;
+    }
+    if t <= stops[0].t {
+        return stops[0].a;
+    }
+    if t >= stops.last().unwrap().t {
+        return stops.last().unwrap().a;
+    }
+
+    for i in 0..stops.len() - 1 {
+        let s1 = &stops[i];
+        let s2 = &stops[i + 1];
+        if t >= s1.t && t <= s2.t {
+            let range = s2.t - s1.t;
+            let ratio = if range == 0.0 {
+                0.0
+            } else {
+                (t - s1.t) / range
+            };
+            return s1.a + (s2.a - s1.a) * ratio;
+        }
+    }
+    1.0
+}
 
 #[cfg(test)]
 mod tests {

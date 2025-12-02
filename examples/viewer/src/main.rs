@@ -105,6 +105,8 @@ fn main() {
     let lottie: LottieJson = if args.len() > 1 {
         let content = std::fs::read_to_string(&args[1]).expect("Failed to read file");
         serde_json::from_str(&content).expect("Failed to parse JSON")
+    } else if let Ok(content) = std::fs::read_to_string("examples/viewer/assets/spinner.json") {
+        serde_json::from_str(&content).expect("Failed to parse spinner JSON")
     } else {
         serde_json::from_str(SAMPLE_LOTTIE).unwrap()
     };
@@ -149,7 +151,7 @@ fn main() {
                                 (width, height),
                                 ColorType::BGRA8888,
                                 AlphaType::Premul,
-                                None,
+                                Some(skia_safe::ColorSpace::new_srgb()),
                             );
 
                             let ptr = buffer.as_mut_ptr() as *mut u8;

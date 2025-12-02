@@ -220,6 +220,10 @@ pub struct GradientStrokeShape {
     pub lc: u8,
     #[serde(default)]
     pub lj: u8,
+    #[serde(default)]
+    pub ml: Option<f32>,
+    #[serde(default)]
+    pub d: Vec<DashProperty>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
