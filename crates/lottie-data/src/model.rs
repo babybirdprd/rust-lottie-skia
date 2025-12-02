@@ -81,9 +81,61 @@ pub enum Shape {
     Path(PathShape),
     #[serde(rename = "tm")]
     Trim(TrimShape),
+    #[serde(rename = "sr")]
+    Polystar(PolystarShape),
+    #[serde(rename = "rp")]
+    Repeater(RepeaterShape),
+    #[serde(rename = "rd")]
+    RoundCorners(RoundCornersShape),
     // Use other for unsupported shapes to prevent failure?
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PolystarShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub p: PositionProperty,
+    pub or: Property<f32>,
+    #[serde(default)]
+    pub os: Property<f32>,
+    pub r: Property<f32>,
+    pub pt: Property<f32>,
+    #[serde(default)]
+    pub sy: u8, // 1=star, 2=polygon
+    #[serde(default)]
+    pub ir: Option<Property<f32>>,
+    #[serde(default)]
+    pub is: Option<Property<f32>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RepeaterShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub c: Property<f32>, // Copies
+    pub o: Property<f32>, // Offset
+    #[serde(default)]
+    pub m: u8, // Composite
+    pub tr: RepeaterTransform,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RepeaterTransform {
+    #[serde(flatten)]
+    pub t: Transform,
+    #[serde(default)]
+    pub so: Property<f32>, // Start Opacity
+    #[serde(default)]
+    pub eo: Property<f32>, // End Opacity
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RoundCornersShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub r: Property<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

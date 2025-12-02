@@ -1,6 +1,7 @@
 use glam::{Mat3, Vec2, Vec4};
 use kurbo::BezPath;
 
+#[derive(Clone, Debug)]
 pub struct RenderTree {
     pub width: f32,
     pub height: f32,
@@ -55,6 +56,7 @@ impl RenderTree {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct RenderNode {
     pub transform: Mat3,
     pub alpha: f32,
@@ -65,6 +67,7 @@ pub struct RenderNode {
     pub effects: Vec<Effect>,
 }
 
+#[derive(Clone, Debug)]
 pub enum NodeContent {
     Group(Vec<RenderNode>),
     Shape(Shape),
@@ -72,6 +75,7 @@ pub enum NodeContent {
     Image(Image),
 }
 
+#[derive(Clone, Debug)]
 pub struct Shape {
     pub geometry: BezPath,
     pub fill: Option<Fill>,
@@ -86,6 +90,7 @@ pub struct Trim {
     pub offset: f32, // 0.0 to 1.0 (usually)
 }
 
+#[derive(Clone, Debug)]
 pub struct Text {
     pub content: String,
     // Simple font handling: family name
@@ -98,6 +103,7 @@ pub struct Text {
     pub stroke: Option<Stroke>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Image {
     // Encoded image data (e.g. PNG, JPEG)
     pub data: Option<Vec<u8>>,
@@ -105,12 +111,14 @@ pub struct Image {
     pub height: u32,
 }
 
+#[derive(Clone, Debug)]
 pub struct Fill {
     pub paint: Paint,
     pub opacity: f32,
     pub rule: FillRule,
 }
 
+#[derive(Clone, Debug)]
 pub struct Stroke {
     pub paint: Paint,
     pub width: f32,
@@ -121,11 +129,13 @@ pub struct Stroke {
     pub dash: Option<DashPattern>,
 }
 
+#[derive(Clone, Debug)]
 pub enum Paint {
     Solid(Vec4), // R, G, B, A
     Gradient(Gradient),
 }
 
+#[derive(Clone, Debug)]
 pub struct Gradient {
     pub kind: GradientKind,
     pub stops: Vec<GradientStop>,
@@ -135,32 +145,38 @@ pub struct Gradient {
     pub end: Vec2,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum GradientKind {
     Linear,
     Radial,
 }
 
+#[derive(Clone, Debug)]
 pub struct GradientStop {
     pub offset: f32,
     pub color: Vec4,
 }
 
+#[derive(Clone, Debug)]
 pub struct DashPattern {
     pub array: Vec<f32>,
     pub offset: f32,
 }
 
+#[derive(Clone, Debug)]
 pub struct Mask {
     pub mode: MaskMode,
     pub geometry: BezPath,
     pub opacity: f32,
 }
 
+#[derive(Clone, Debug)]
 pub struct Matte {
     pub mode: MatteMode,
     pub node: RenderNode,
 }
 
+#[derive(Clone, Debug)]
 pub enum Effect {
     GaussianBlur {
         sigma: f32,
@@ -174,18 +190,6 @@ pub enum Effect {
         matrix: [f32; 20],
     },
     DisplacementMap {
-        // Defines the displacement map source.
-        // Ideally this should be a reference to another layer or an image,
-        // but for now we assume it's implicit or handled by the renderer via input chaining
-        // if the Lottie structure implies it. However, Lottie displacement maps use a specific layer.
-        // Here we'll assume the map is provided as a separate RenderNode or similar.
-        // To simplify for this task and match typical Skia filter inputs (which take an input filter),
-        // we might need to know *what* to use as the displacement map.
-        // BUT, since we are defining the *data* struct, we should hold the data.
-        // Let's assume the displacement map layer's content is rendered and passed here?
-        // Or maybe just the parameters?
-        // The spec says: "Displacement Map: image_filters::displacement_map."
-        // We'll stick to parameters.
         scale: f32,
         x_channel: ColorChannel,
         y_channel: ColorChannel,
