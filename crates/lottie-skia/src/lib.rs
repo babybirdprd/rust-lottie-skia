@@ -197,8 +197,18 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                 let mut paint = Paint::default();
                 paint.set_style(PaintStyle::Fill);
                 paint.set_alpha_f(sanitize(fill.opacity * alpha));
-                setup_paint_shader(&mut paint, &fill.paint);
 
+                if let Some(trim) = &shape.trim {
+                    // Apply trim to fill? Usually Trim Paths only affects Stroke in Lottie.
+                    // But if applied to a shape that has fill, does it trim the outline?
+                    // Lottie spec: "Trim Paths ... affects the path of the shape".
+                    // So yes, it affects geometry.
+                    if let Some(effect) = PathEffect::trim(trim.start, trim.end, skia_safe::trim_path_effect::Mode::Normal) {
+                         paint.set_path_effect(effect);
+                    }
+                }
+
+                setup_paint_shader(&mut paint, &fill.paint);
                 canvas.draw_path(&path, &paint);
             }
 
@@ -214,16 +224,30 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     paint.set_stroke_miter(sanitize(miter));
                 }
 
-                // 4.3.3 Dashed Lines
+                // 4.3.3 Dashed Lines + Trim
+                let mut path_effect = None;
+
                 if let Some(dash) = &stroke.dash {
                     let mut array: Vec<f32> = dash.array.iter().map(|&v| sanitize(v)).collect();
                     if array.len() % 2 != 0 {
                         let clone = array.clone();
                         array.extend(clone);
                     }
-                    if let Some(effect) = PathEffect::dash(&array, sanitize(dash.offset)) {
-                        paint.set_path_effect(effect);
+                    path_effect = PathEffect::dash(&array, sanitize(dash.offset));
+                }
+
+                if let Some(trim) = &shape.trim {
+                    if let Some(trim_effect) = PathEffect::trim(trim.start, trim.end, skia_safe::trim_path_effect::Mode::Normal) {
+                         path_effect = if let Some(pe) = path_effect {
+                             Some(PathEffect::compose(trim_effect, pe))
+                         } else {
+                             Some(trim_effect)
+                         }
                     }
+                }
+
+                if let Some(pe) = path_effect {
+                    paint.set_path_effect(pe);
                 }
 
                 setup_paint_shader(&mut paint, &stroke.paint);
@@ -232,9 +256,10 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
         }
         NodeContent::Text(text) => {
             let font_mgr = FontMgr::new();
-            // Try to match family, fallback to empty string (default)
+            // Try to match family, fallback to common fonts then default
             let typeface = font_mgr
                 .match_family_style(&text.font_family, FontStyle::normal())
+                .or_else(|| font_mgr.match_family_style("Arial", FontStyle::normal()))
                 .or_else(|| font_mgr.match_family_style("", FontStyle::normal()));
 
             if let Some(typeface) = typeface {
