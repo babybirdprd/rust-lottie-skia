@@ -35,6 +35,11 @@ pub struct Layer {
     #[serde(default)]
     pub ao: Option<u32>,
 
+    #[serde(default, rename = "masksProperties")]
+    pub masks_properties: Option<Vec<MaskProperties>>,
+    #[serde(default)]
+    pub tt: Option<u8>,
+
     // Type specific (flattened manually as optional fields)
     #[serde(default, rename = "refId")]
     pub ref_id: Option<String>, // PreComp, Image
@@ -55,6 +60,18 @@ pub struct Layer {
 }
 
 fn default_one() -> f32 { 1.0 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MaskProperties {
+    #[serde(default)]
+    pub inv: bool,
+    #[serde(default)]
+    pub mode: Option<String>,
+    pub pt: Property<BezierPath>,
+    pub o: Property<f32>,
+    #[serde(default)]
+    pub nm: Option<String>,
+}
 
 // Shapes
 
