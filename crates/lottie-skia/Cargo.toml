@@ -1,0 +1,8 @@
+[package]
+name = "lottie-skia"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lottie-core.workspace = true
+skia-safe.workspace = true

@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "examples/viewer"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Core Dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Math & Geometry
+glam = "0.24" # Standard linear algebra
+kurbo = "0.9" # 2D geometry (Bezier math)
+
+# Rendering
+# MUST match the version used in director-engine to allow passing Canvas references
+skia-safe = "0.75.0" 
+
+# Internal Dependencies
+lottie-data = { path = "crates/lottie-data" }
+lottie-core = { path = "crates/lottie-core" }
+lottie-skia = { path = "crates/lottie-skia" }

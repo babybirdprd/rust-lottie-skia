@@ -1,0 +1,11 @@
+[package]
+name = "lottie-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lottie-data.workspace = true
+serde.workspace = true
+glam.workspace = true
+kurbo.workspace = true
+thiserror.workspace = true
