@@ -2,9 +2,9 @@
 pub mod renderer;
 
 pub use renderer::{
-    BlendMode, DashPattern, Effect, Fill, FillRule, Gradient, GradientKind, GradientStop, LineCap,
-    LineJoin, Mask, MaskMode, Matte, MatteMode, NodeContent, Paint, RenderNode, RenderTree, Shape,
-    Stroke,
+    BlendMode, ColorChannel, DashPattern, Effect, Fill, FillRule, Gradient, GradientKind,
+    GradientStop, Image, Justification, LineCap, LineJoin, Mask, MaskMode, Matte, MatteMode,
+    NodeContent, Paint, RenderNode, RenderTree, Shape, Stroke, Text,
 };
 
 pub struct LottiePlayer;
