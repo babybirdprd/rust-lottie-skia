@@ -148,9 +148,19 @@ pub enum Shape {
     OffsetPath(OffsetPathShape),
     #[serde(rename = "wgl")]
     WigglePath(WigglePathShape),
+    #[serde(rename = "mm")]
+    MergePaths(MergePathsShape),
     // Use other for unsupported shapes to prevent failure?
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MergePathsShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    #[serde(default)]
+    pub mm: u8, // Mode: 1=Merge, 2=Add, 3=Subtract, 4=Intersect, 5=Exclude
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
