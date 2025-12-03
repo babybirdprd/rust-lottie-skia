@@ -104,9 +104,67 @@ pub enum Shape {
     Repeater(RepeaterShape),
     #[serde(rename = "rd")]
     RoundCorners(RoundCornersShape),
+    #[serde(rename = "zz")]
+    ZigZag(ZigZagShape),
+    #[serde(rename = "pb")]
+    PuckerBloat(PuckerBloatShape),
+    #[serde(rename = "tw")]
+    Twist(TwistShape),
+    #[serde(rename = "op")]
+    OffsetPath(OffsetPathShape),
+    #[serde(rename = "wgl")]
+    WigglePath(WigglePathShape),
     // Use other for unsupported shapes to prevent failure?
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ZigZagShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub r: Property<f32>, // Ridges
+    pub s: Property<f32>, // Size
+    #[serde(default)]
+    pub pt: Property<f32>, // Point Type: 1=Corner, 2=Smooth
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PuckerBloatShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub a: Property<f32>, // Amount
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TwistShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub a: Property<f32>, // Angle
+    pub c: Property<Vec2>, // Center
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OffsetPathShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub a: Property<f32>, // Amount
+    #[serde(default)]
+    pub lj: u8, // Line Join
+    #[serde(default)]
+    pub ml: Option<f32>, // Miter Limit
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WigglePathShape {
+    #[serde(default)]
+    pub nm: Option<String>,
+    pub s: Property<f32>, // Speed (wiggles/sec)
+    pub w: Property<f32>, // Size
+    #[serde(default)]
+    pub r: Property<f32>, // Correlation
+    #[serde(default)]
+    pub sh: Property<f32>, // Seed/Phase
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

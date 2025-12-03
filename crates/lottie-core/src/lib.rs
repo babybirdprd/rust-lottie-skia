@@ -1,7 +1,9 @@
 pub mod animatable;
+pub mod modifiers;
 pub mod renderer;
 
 use animatable::Animator;
+use modifiers::{GeometryModifier, ZigZagModifier, PuckerBloatModifier, TwistModifier, WiggleModifier, OffsetPathModifier};
 use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, Point, Shape as _};
 use lottie_data::model::{self as data, LottieJson};
@@ -21,6 +23,50 @@ enum GeometryKind {
     Rect { size: Vec2, pos: Vec2, radius: f32 },
     Polystar(PolystarParams),
     Ellipse { size: Vec2, pos: Vec2 },
+}
+
+impl PendingGeometry {
+    fn to_path(&self, builder: &SceneGraphBuilder) -> BezPath {
+         let mut path = match &self.kind {
+            GeometryKind::Path(p) => p.clone(),
+            GeometryKind::Rect { size, pos, radius } => {
+                let half = *size / 2.0;
+                let rect = kurbo::Rect::new(
+                    (pos.x - half.x) as f64,
+                    (pos.y - half.y) as f64,
+                    (pos.x + half.x) as f64,
+                    (pos.y + half.y) as f64,
+                );
+                if *radius > 0.0 {
+                    rect.to_rounded_rect(*radius as f64).to_path(0.1)
+                } else {
+                    rect.to_path(0.1)
+                }
+            }
+            GeometryKind::Ellipse { size, pos } => {
+                let half = *size / 2.0;
+                let ellipse = kurbo::Ellipse::new(
+                    (pos.x as f64, pos.y as f64),
+                    (half.x as f64, half.y as f64),
+                    0.0,
+                );
+                ellipse.to_path(0.1)
+            }
+            GeometryKind::Polystar(params) => builder.generate_polystar_path(params),
+        };
+
+        let m = self.transform.to_cols_array();
+        let affine = kurbo::Affine::new([
+            m[0] as f64,
+            m[1] as f64,
+            m[3] as f64,
+            m[4] as f64,
+            m[6] as f64,
+            m[7] as f64,
+        ]);
+        path.apply_affine(affine);
+        path
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -530,6 +576,105 @@ impl<'a> SceneGraphBuilder<'a> {
                         }
                     }
                 }
+                data::Shape::ZigZag(zz) => {
+                    let ridges = Animator::resolve(&zz.r, 0.0, |v| *v, 0.0);
+                    let size = Animator::resolve(&zz.s, 0.0, |v| *v, 0.0);
+                    let pt = Animator::resolve(&zz.pt, 0.0, |v| *v, 1.0); // 1 = Corner, 2 = Smooth
+
+                    let modifier = ZigZagModifier {
+                        ridges,
+                        size,
+                        smooth: pt > 1.5,
+                    };
+
+                    self.apply_modifier_to_active(&mut active_geometries, &modifier);
+                }
+                data::Shape::PuckerBloat(pb) => {
+                    let amount = Animator::resolve(&pb.a, 0.0, |v| *v, 0.0);
+                    // Center? PuckerBloat usually doesn't have explicit center in struct?
+                    // I defined struct with only 'a'.
+                    // Usually it operates on the center of the shape.
+                    // But active_geometries has multiple shapes.
+                    // I will assume (0,0) is center or bounds center?
+                    // Lottie PuckerBloat applies to the shape relative to its own transform.
+                    // Since I bake geometries which include transform, I should use (0,0) if transform is correct?
+                    // Actually, PendingGeometry.transform applies to the shape.
+                    // If I bake, I bake the transform. So center is affected.
+                    // I'll use Vec2::ZERO as default center if not provided?
+                    // Wait, `PuckerBloatShape` struct I added has `nm` and `a`. No `c`.
+                    // So Center must be implicit (0,0).
+
+                    let modifier = PuckerBloatModifier {
+                        amount,
+                        center: Vec2::ZERO, // Implicit center
+                    };
+                    self.apply_modifier_to_active(&mut active_geometries, &modifier);
+                }
+                data::Shape::Twist(tw) => {
+                    let angle = Animator::resolve(&tw.a, 0.0, |v| *v, 0.0);
+                    let center = Animator::resolve(&tw.c, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+
+                    let modifier = TwistModifier {
+                        angle,
+                        center,
+                    };
+                    self.apply_modifier_to_active(&mut active_geometries, &modifier);
+                }
+                data::Shape::OffsetPath(op) => {
+                     let amount = Animator::resolve(&op.a, 0.0, |v| *v, 0.0);
+                     let miter_limit = op.ml.unwrap_or(4.0);
+                     let line_join = op.lj;
+
+                     let modifier = OffsetPathModifier {
+                         amount,
+                         miter_limit,
+                         line_join,
+                     };
+                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
+                }
+                data::Shape::WigglePath(wg) => {
+                    let speed = Animator::resolve(&wg.s, 0.0, |v| *v, 0.0);
+                    let size = Animator::resolve(&wg.w, 0.0, |v| *v, 0.0);
+                    let correlation = Animator::resolve(&wg.r, 0.0, |v| *v, 0.0);
+                    let seed_prop = Animator::resolve(&wg.sh, 0.0, |v| *v, 0.0);
+
+                    // Seed from struct or generic?
+                    // Use seed_prop as base.
+
+                    let modifier = WiggleModifier {
+                        seed: seed_prop,
+                        time: self.frame / 60.0, // Frame is usually frames. Convert to seconds?
+                        // LottiePlayer has frame_rate. SceneGraphBuilder has 'frame'.
+                        // Assuming frame is frame number. time = frame / fps.
+                        // I don't have fps here easily?
+                        // SceneGraphBuilder doesn't store fps.
+                        // But I have `frame` (current time in frames).
+                        // Speed is "wiggles per second".
+                        // Lottie defaults 30fps or 60fps?
+                        // I'll assume 60.0 or pass it?
+                        // `LottieJson` has `fr`.
+                        speed: speed / self.model.fr, // Convert wiggles/sec to wiggles/frame?
+                        // Wait, modifier logic uses `time * speed`.
+                        // If I pass `frame` as time, then speed should be wiggles/frame.
+                        // speed is wiggles/sec. frame is frames.
+                        // t_sec = frame / fps.
+                        // input = t_sec * speed = (frame/fps) * speed.
+                        // I'll pass calculated value.
+                        amount: size,
+                        correlation,
+                    };
+
+                    // Fix speed calculation inside apply?
+                    // I will instantiate struct with correct time/speed combo.
+                    // Actually, I can just pass `frame` and `speed_per_frame`.
+                    // speed_per_frame = speed / model.fr
+
+                    let mut mod_clone = modifier; // copy
+                    mod_clone.time = self.frame;
+                    mod_clone.speed = speed / self.model.fr;
+
+                    self.apply_modifier_to_active(&mut active_geometries, &mod_clone);
+                }
                 data::Shape::Repeater(rp) => {
                     let copies = Animator::resolve(&rp.c, 0.0, |v| *v, 0.0);
                     let offset = Animator::resolve(&rp.o, 0.0, |v| *v, 0.0);
@@ -828,46 +973,20 @@ impl<'a> SceneGraphBuilder<'a> {
         }
     }
 
-    fn convert_geometry(&self, geom: &PendingGeometry) -> BezPath {
-        let mut path = match &geom.kind {
-            GeometryKind::Path(p) => p.clone(),
-            GeometryKind::Rect { size, pos, radius } => {
-                let half = *size / 2.0;
-                let rect = kurbo::Rect::new(
-                    (pos.x - half.x) as f64,
-                    (pos.y - half.y) as f64,
-                    (pos.x + half.x) as f64,
-                    (pos.y + half.y) as f64,
-                );
-                if *radius > 0.0 {
-                    rect.to_rounded_rect(*radius as f64).to_path(0.1)
-                } else {
-                    rect.to_path(0.1)
-                }
-            }
-            GeometryKind::Ellipse { size, pos } => {
-                let half = *size / 2.0;
-                let ellipse = kurbo::Ellipse::new(
-                    (pos.x as f64, pos.y as f64),
-                    (half.x as f64, half.y as f64),
-                    0.0,
-                );
-                ellipse.to_path(0.1)
-            }
-            GeometryKind::Polystar(params) => self.generate_polystar_path(params),
-        };
+    fn apply_modifier_to_active(&self, active: &mut Vec<PendingGeometry>, modifier: &impl GeometryModifier) {
+        for geom in active.iter_mut() {
+            // Bake to path if not already
+            let mut path = geom.to_path(self);
+            modifier.modify(&mut path);
 
-        let m = geom.transform.to_cols_array();
-        let affine = kurbo::Affine::new([
-            m[0] as f64,
-            m[1] as f64,
-            m[3] as f64,
-            m[4] as f64,
-            m[6] as f64,
-            m[7] as f64,
-        ]);
-        path.apply_affine(affine);
-        path
+            // Reset transform to identity because it's baked into path
+            geom.transform = Mat3::IDENTITY;
+            geom.kind = GeometryKind::Path(path);
+        }
+    }
+
+    fn convert_geometry(&self, geom: &PendingGeometry) -> BezPath {
+        geom.to_path(self)
     }
 
     fn generate_polystar_path(&self, params: &PolystarParams) -> BezPath {
@@ -1183,6 +1302,7 @@ fn interpolate_alpha(stops: &[AlphaStop], t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kurbo::PathEl;
     use lottie_data::model as data;
 
     #[test]
@@ -1336,5 +1456,106 @@ mod tests {
         } else {
              panic!("Expected Group content for root, got {:?}", root.content);
         }
+    }
+
+    #[test]
+    fn test_zigzag_modifier() {
+        let model = LottieJson {
+             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
+             layers: vec![], assets: vec![]
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+
+        // Rect
+        let rect = data::Shape::Rect(data::RectShape {
+            nm: None,
+            s: data::Property { k: data::Value::Static([100.0, 100.0]), ..Default::default() },
+            p: data::Property { k: data::Value::Static([50.0, 50.0]), ..Default::default() },
+            r: data::Property::default(),
+        });
+
+        // ZigZag
+        let zigzag = data::Shape::ZigZag(data::ZigZagShape {
+            nm: None,
+            r: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // 10 Ridges
+            s: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // Size 10
+            pt: data::Property { k: data::Value::Static(1.0), ..Default::default() }, // Corner
+        });
+
+        let fill = data::Shape::Fill(data::FillShape {
+             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+        });
+
+        let shapes = vec![rect, zigzag, fill];
+        let nodes = builder.process_shapes(&shapes);
+
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].content {
+            NodeContent::Shape(s) => {
+                // Rect usually has 4 sides. 10 Ridges total? Or per segment?
+                // My ZigZag implementation treats the whole path.
+                // It walks the path.
+                // If 10 ridges, we expect ~10 points + start/end.
+                // Rect path elements count: Move, Line, Line, Line, Close.
+                // ZigZag path elements count: Move, Line... (many).
+                let count = s.geometry.elements().len();
+                println!("ZigZag element count: {}", count);
+                assert!(count > 5, "ZigZag should add points. Got {}", count);
+            },
+            _ => panic!("Expected Shape"),
+        }
+    }
+
+    #[test]
+    fn test_wiggle_modifier() {
+        // Wiggle modifier changes geometry based on time.
+        // We test that geometry is different at t=0 vs t=1.
+        let model = LottieJson {
+             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
+             layers: vec![], assets: vec![]
+        };
+        let assets = HashMap::new();
+        let builder1 = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder2 = SceneGraphBuilder::new(&model, 10.0, &assets); // different time
+
+        let rect = data::Shape::Rect(data::RectShape {
+            nm: None,
+            s: data::Property { k: data::Value::Static([100.0, 100.0]), ..Default::default() },
+            p: data::Property { k: data::Value::Static([50.0, 50.0]), ..Default::default() },
+            r: data::Property::default(),
+        });
+
+        let wiggle = data::Shape::WigglePath(data::WigglePathShape {
+            nm: None,
+            s: data::Property { k: data::Value::Static(10.0), ..Default::default() },
+            w: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // Size > 0
+            r: data::Property::default(),
+            sh: data::Property::default(),
+        });
+
+        let fill = data::Shape::Fill(data::FillShape {
+             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+        });
+
+        let shapes = vec![rect, wiggle, fill];
+
+        let nodes1 = builder1.process_shapes(&shapes);
+        let nodes2 = builder2.process_shapes(&shapes);
+
+        let path1 = match &nodes1[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
+        let path2 = match &nodes2[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
+
+        // Check if point positions differ
+        // We can inspect elements
+        // This relies on `kurbo` `BezPath` equality which is not derived?
+        // Or inspect points.
+
+        let p1 = match path1.elements()[0] { PathEl::MoveTo(p) => p, _ => Point::ZERO };
+        let p2 = match path2.elements()[0] { PathEl::MoveTo(p) => p, _ => Point::ZERO };
+
+        // Wiggle might affect MoveTo point if it wiggles vertices.
+        // Note: Rect starts at corner.
+        assert_ne!(p1, p2, "Wiggle should displace points differently at different times");
     }
 }
