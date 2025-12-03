@@ -67,6 +67,7 @@ impl PendingGeometry {
         path.apply_affine(affine);
         path
     }
+
 }
 
 #[derive(Clone, Copy)]
@@ -295,10 +296,193 @@ impl<'a> SceneGraphBuilder<'a> {
             NodeContent::Group(shape_nodes)
         } else if let Some(text_data) = &layer.t {
             // Text Layer
-            let doc = Animator::resolve(&text_data.d, self.frame - layer.st, |v| v.clone(), data::TextDocument::default());
-            // Map TextDocument to Text
+            let doc = Animator::resolve(
+                &text_data.d,
+                self.frame - layer.st,
+                |v| v.clone(),
+                data::TextDocument::default(),
+            );
+
+            let base_fill_color = Vec4::new(doc.fc[0], doc.fc[1], doc.fc[2], 1.0);
+            let base_stroke_color = if let Some(sc) = &doc.sc {
+                Some(Vec4::new(sc[0], sc[1], sc[2], 1.0))
+            } else {
+                None
+            };
+
+            let chars: Vec<char> = doc.t.chars().collect();
+            let char_count = chars.len();
+
+            let mut glyphs = Vec::with_capacity(char_count);
+
+            for &c in &chars {
+                let g = RenderGlyph {
+                    character: c,
+                    pos: Vec2::ZERO,
+                    scale: Vec2::ONE,
+                    rotation: 0.0,
+                    tracking: 0.0,
+                    alpha: 1.0,
+                    fill: Some(Fill {
+                        paint: Paint::Solid(base_fill_color),
+                        opacity: 1.0,
+                        rule: FillRule::NonZero,
+                    }),
+                    stroke: if let Some(col) = base_stroke_color {
+                        Some(Stroke {
+                            paint: Paint::Solid(col),
+                            width: doc.sw.unwrap_or(1.0),
+                            opacity: 1.0,
+                            cap: LineCap::Round,
+                            join: LineJoin::Round,
+                            miter_limit: None,
+                            dash: None,
+                        })
+                    } else {
+                        None
+                    },
+                };
+                glyphs.push(g);
+            }
+
+            // Animators
+            if let Some(animators) = &text_data.a {
+                for animator in animators {
+                    // 1. Selector
+                    let sel = &animator.s;
+                    // Resolve Start, End, Offset
+                    let start_val = Animator::resolve(
+                        sel.s.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        0.0,
+                    );
+                    let end_val = Animator::resolve(
+                        sel.e.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        100.0,
+                    );
+                    let offset_val = Animator::resolve(
+                        sel.o.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        0.0,
+                    );
+
+                    let start_idx = char_count as f32 * start_val / 100.0;
+                    let end_idx = char_count as f32 * end_val / 100.0;
+                    let offset_idx = char_count as f32 * offset_val / 100.0;
+
+                    // 2. Style
+                    let style = &animator.a;
+                    let p_delta = Animator::resolve(
+                        style.p.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| Vec2::from_slice(v),
+                        Vec2::ZERO,
+                    );
+                    let s_val = Animator::resolve(
+                        style.s.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| Vec2::from_slice(v),
+                        Vec2::new(100.0, 100.0),
+                    );
+                    let o_val = Animator::resolve(
+                        style.o.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        100.0,
+                    );
+                    let r_val = Animator::resolve(
+                        style.r.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        0.0,
+                    );
+                    let t_val = Animator::resolve(
+                        style.t.as_ref().unwrap_or(&data::Property::default()),
+                        self.frame - layer.st,
+                        |v| *v,
+                        0.0,
+                    );
+
+                    let fc_val = if let Some(fc_prop) = &style.fc {
+                        Some(Animator::resolve(
+                            fc_prop,
+                            self.frame - layer.st,
+                            |v| Vec4::from_slice(v),
+                            Vec4::ONE,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let sc_val = if let Some(sc_prop) = &style.sc {
+                        Some(Animator::resolve(
+                            sc_prop,
+                            self.frame - layer.st,
+                            |v| Vec4::from_slice(v),
+                            Vec4::ONE,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    for (i, glyph) in glyphs.iter_mut().enumerate() {
+                        let idx = i as f32;
+                        let effective_start = start_idx + offset_idx;
+                        let effective_end = end_idx + offset_idx;
+
+                        let overlap_start = idx.max(effective_start);
+                        let overlap_end = (idx + 1.0).min(effective_end);
+
+                        let factor = (overlap_end - overlap_start).max(0.0).min(1.0);
+
+                        if factor > 0.0 {
+                            // Position (Additive)
+                            glyph.pos += p_delta * factor;
+
+                            // Scale
+                            let scale_factor = Vec2::ONE + ((s_val / 100.0) - Vec2::ONE) * factor;
+                            glyph.scale *= scale_factor;
+
+                            // Rotation (Additive)
+                            glyph.rotation += r_val * factor;
+
+                            // Tracking (Additive)
+                            glyph.tracking += t_val * factor;
+
+                            // Opacity (Multiplicative)
+                            let target_alpha = o_val / 100.0;
+                            // Lerp alpha multiplier: 1.0 -> target_alpha based on factor
+                            let alpha_mult = 1.0 + (target_alpha - 1.0) * factor;
+                            glyph.alpha *= alpha_mult;
+
+                            // Fill Color (Mix)
+                            if let Some(target_color) = fc_val {
+                                if let Some(fill) = &mut glyph.fill {
+                                    if let Paint::Solid(current_color) = &mut fill.paint {
+                                        *current_color = current_color.lerp(target_color, factor);
+                                    }
+                                }
+                            }
+
+                            // Stroke Color (Mix)
+                            if let Some(target_color) = sc_val {
+                                if let Some(stroke) = &mut glyph.stroke {
+                                    if let Paint::Solid(current_color) = &mut stroke.paint {
+                                        *current_color = current_color.lerp(target_color, factor);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             NodeContent::Text(Text {
-                content: doc.t,
+                glyphs,
                 font_family: doc.f,
                 size: doc.s,
                 justify: match doc.j {
@@ -308,22 +492,6 @@ impl<'a> SceneGraphBuilder<'a> {
                 },
                 tracking: doc.tr,
                 line_height: doc.lh,
-                fill: Some(Fill {
-                    paint: Paint::Solid(Vec4::new(doc.fc[0], doc.fc[1], doc.fc[2], 1.0)), // Alpha?
-                    opacity: 1.0,
-                    rule: FillRule::NonZero,
-                }),
-                stroke: if let Some(sc) = doc.sc {
-                     Some(Stroke {
-                         paint: Paint::Solid(Vec4::new(sc[0], sc[1], sc[2], 1.0)),
-                         width: doc.sw.unwrap_or(1.0),
-                         opacity: 1.0,
-                         cap: LineCap::Round,
-                         join: LineJoin::Round,
-                         miter_limit: None,
-                         dash: None,
-                     })
-                } else { None },
             })
         } else if let Some(ref_id) = &layer.ref_id {
             // Image or Precomp
@@ -1667,3 +1835,82 @@ mod tests {
         } else { panic!("Expected Group (Root)"); }
     }
 }
+
+    #[test]
+    fn test_text_animator() {
+        let text_doc = data::TextDocument {
+            t: "AB".to_string(),
+            f: "Arial".to_string(),
+            s: 50.0,
+            ..Default::default()
+        };
+
+        // Animator: Scale 200% for first char (A)
+        // Selector 0-50% covers the first of 2 chars (0 to 1 in indices)
+        let animator = data::TextAnimatorData {
+            nm: Some("Anim".to_string()),
+            s: data::TextSelectorData {
+                s: Some(data::Property { k: data::Value::Static(0.0), ..Default::default() }),
+                e: Some(data::Property { k: data::Value::Static(50.0), ..Default::default() }),
+                o: None,
+            },
+            a: data::TextStyleData {
+                s: Some(data::Property { k: data::Value::Static([200.0, 200.0]), ..Default::default() }),
+                ..Default::default()
+            },
+        };
+
+        let text_data = data::TextData {
+            d: data::Property { k: data::Value::Static(text_doc), ..Default::default() },
+            a: Some(vec![animator]),
+        };
+
+        let layer = data::Layer {
+            ty: 5,
+            ind: Some(1),
+            parent: None,
+            nm: Some("Text".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ref_id: None,
+            w: None, h: None, color: None, sw: None, sh: None, shapes: None,
+            t: Some(text_data),
+            ..data::Layer {
+                ty: 5, ind: None, parent: None, nm: None, ip: 0.0, op: 0.0, st: 0.0, ks: data::Transform::default(), ao: None, tm: None, masks_properties: None, tt: None, ref_id: None, w: None, h: None, color: None, sw: None, sh: None, shapes: None, t: None
+            }
+        };
+
+        let model = LottieJson {
+             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
+             layers: vec![layer],
+             assets: vec![],
+        };
+
+        let mut player = LottiePlayer::new();
+        player.load(model);
+
+        let tree = player.render_tree();
+        let root = tree.root;
+
+        if let NodeContent::Group(l1) = root.content {
+             let text_node = &l1[0];
+             if let NodeContent::Text(text) = &text_node.content {
+                 assert_eq!(text.glyphs.len(), 2);
+                 let ga = &text.glyphs[0];
+                 let gb = &text.glyphs[1];
+
+                 assert_eq!(ga.character, 'A');
+                 assert_eq!(gb.character, 'B');
+
+                 assert!((ga.scale.x - 2.0).abs() < 0.01, "Expected A scale 2.0, got {:?}", ga.scale);
+                 assert!((gb.scale.x - 1.0).abs() < 0.01, "Expected B scale 1.0, got {:?}", gb.scale);
+
+             } else { panic!("Expected Text Content"); }
+        } else { panic!("Expected Group (Root)"); }
+    }
