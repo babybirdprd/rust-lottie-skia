@@ -34,6 +34,8 @@ pub struct Layer {
     pub ks: Transform,
     #[serde(default)]
     pub ao: Option<u32>,
+    #[serde(default)]
+    pub tm: Option<Property<f32>>,
 
     #[serde(default, rename = "masksProperties")]
     pub masks_properties: Option<Vec<MaskProperties>>,
