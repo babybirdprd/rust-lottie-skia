@@ -205,6 +205,32 @@ pub enum Effect {
         x_channel: ColorChannel,
         y_channel: ColorChannel,
     },
+    Tint {
+        black: Vec4,
+        white: Vec4,
+        amount: f32,
+    },
+    Fill {
+        color: Vec4,
+        opacity: f32,
+    },
+    Tritone {
+        highlights: Vec4,
+        midtones: Vec4,
+        shadows: Vec4,
+    },
+    Stroke {
+        color: Vec4,
+        width: f32,
+        opacity: f32,
+    },
+    Levels {
+        in_black: f32,
+        in_white: f32,
+        gamma: f32,
+        out_black: f32,
+        out_white: f32,
+    },
 }
 
 // Enums

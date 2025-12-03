@@ -7,9 +7,10 @@ use lottie_core::{
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
-    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas,
-    ClipOp, Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix,
-    Paint, PaintStyle, Path, PathEffect, PathFillType, PathOp, Point, Rect, TextBlob, TileMode,
+    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, ClipOp,
+    Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
+    PaintStyle, Path, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect, TextBlob,
+    TileMode,
 };
 
 pub struct SkiaRenderer;
@@ -182,8 +183,12 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     // But if applied to a shape that has fill, does it trim the outline?
                     // Lottie spec: "Trim Paths ... affects the path of the shape".
                     // So yes, it affects geometry.
-                    if let Some(effect) = PathEffect::trim(trim.start, trim.end, skia_safe::trim_path_effect::Mode::Normal) {
-                         paint.set_path_effect(effect);
+                    if let Some(effect) = PathEffect::trim(
+                        trim.start,
+                        trim.end,
+                        skia_safe::trim_path_effect::Mode::Normal,
+                    ) {
+                        paint.set_path_effect(effect);
                     }
                 }
 
@@ -217,12 +222,16 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                 }
 
                 if let Some(trim) = &shape.trim {
-                    if let Some(trim_effect) = PathEffect::trim(trim.start, trim.end, skia_safe::trim_path_effect::Mode::Normal) {
-                         path_effect = if let Some(pe) = path_effect {
-                             Some(PathEffect::compose(trim_effect, pe))
-                         } else {
-                             Some(trim_effect)
-                         }
+                    if let Some(trim_effect) = PathEffect::trim(
+                        trim.start,
+                        trim.end,
+                        skia_safe::trim_path_effect::Mode::Normal,
+                    ) {
+                        path_effect = if let Some(pe) = path_effect {
+                            Some(PathEffect::compose(trim_effect, pe))
+                        } else {
+                            Some(trim_effect)
+                        }
                     }
                 }
 
@@ -606,6 +615,111 @@ fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
                 filter,
                 None,
             ),
+            Effect::Fill { color, opacity } => {
+                let c = glam_to_skia_color_legacy(*color);
+                let a = sanitize(*opacity);
+                if let Some(fill_cf) = color_filters::blend(c, BlendMode::SrcIn) {
+                    let identity = color_filters::matrix_row_major(
+                        &[
+                            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                            0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                        ],
+                        color_filters::Clamp::Yes,
+                    );
+                    if let Some(lerp_cf) = color_filters::lerp(a, &fill_cf, &identity) {
+                        image_filters::color_filter(lerp_cf, filter, None)
+                    } else {
+                        image_filters::color_filter(fill_cf, filter, None)
+                    }
+                } else {
+                    filter
+                }
+            }
+            Effect::Tint {
+                black,
+                white,
+                amount,
+            } => {
+                let sksl = r#"
+                    uniform vec4 uBlack;
+                    uniform vec4 uWhite;
+                    uniform float uAmount;
+
+                    half4 main(half4 color) {
+                        float lum = dot(color.rgb, half3(0.2126, 0.7152, 0.0722));
+                        vec3 mapped = mix(uBlack.rgb, uWhite.rgb, lum);
+                        vec3 result = mix(color.rgb, mapped, uAmount);
+                        return half4(result, color.a);
+                    }
+                "#;
+                if let Ok(effect) = RuntimeEffect::make_for_color_filter(sksl, None) {
+                    let mut data = Vec::with_capacity(36);
+                    for v in [
+                        black.x, black.y, black.z, black.w, white.x, white.y, white.z, white.w,
+                        *amount,
+                    ] {
+                        data.extend_from_slice(&v.to_ne_bytes());
+                    }
+                    let uniforms = Data::new_copy(&data);
+                    if let Some(cf) = effect.make_color_filter(uniforms, None) {
+                        image_filters::color_filter(cf, filter, None)
+                    } else {
+                        filter
+                    }
+                } else {
+                    filter
+                }
+            }
+            Effect::Tritone {
+                highlights,
+                midtones,
+                shadows,
+            } => {
+                let sksl = r#"
+                    uniform vec4 uHighlights;
+                    uniform vec4 uMidtones;
+                    uniform vec4 uShadows;
+
+                    half4 main(half4 color) {
+                        float lum = dot(color.rgb, half3(0.2126, 0.7152, 0.0722));
+                        vec3 mapped;
+                        if (lum < 0.5) {
+                            mapped = mix(uShadows.rgb, uMidtones.rgb, lum * 2.0);
+                        } else {
+                            mapped = mix(uMidtones.rgb, uHighlights.rgb, (lum - 0.5) * 2.0);
+                        }
+                        return half4(mapped, color.a);
+                    }
+                "#;
+                if let Ok(effect) = RuntimeEffect::make_for_color_filter(sksl, None) {
+                    let mut data = Vec::with_capacity(48);
+                    for v in [
+                        highlights.x,
+                        highlights.y,
+                        highlights.z,
+                        highlights.w,
+                        midtones.x,
+                        midtones.y,
+                        midtones.z,
+                        midtones.w,
+                        shadows.x,
+                        shadows.y,
+                        shadows.z,
+                        shadows.w,
+                    ] {
+                        data.extend_from_slice(&v.to_ne_bytes());
+                    }
+                    let uniforms = Data::new_copy(&data);
+                    if let Some(cf) = effect.make_color_filter(uniforms, None) {
+                        image_filters::color_filter(cf, filter, None)
+                    } else {
+                        filter
+                    }
+                } else {
+                    filter
+                }
+            }
+            Effect::Stroke { .. } | Effect::Levels { .. } => filter,
         };
         filter = next_filter;
     }
