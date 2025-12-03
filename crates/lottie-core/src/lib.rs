@@ -3,6 +3,7 @@ pub mod modifiers;
 pub mod renderer;
 
 use animatable::Animator;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, Point, Shape as _};
 use lottie_data::model::{self as data, LottieJson};
@@ -535,20 +536,17 @@ impl<'a> SceneGraphBuilder<'a> {
                     {
                         Some(bytes.clone())
                     } else if let Some(p) = &asset.p {
-                        if p.starts_with("data:image") {
+                        if p.starts_with("data:image/") && p.contains(";base64,") {
                             // Base64
-                            let split: Vec<&str> = p.split(",").collect();
+                            let split: Vec<&str> = p.splitn(2, ',').collect();
                             if split.len() > 1 {
-                                // Simple decode (skipping proper base64 implementation for brevity,
-                                // but I should assume I can't just unwrap).
-                                // I'll rely on the `image` crate or `base64` crate if available?
-                                // I didn't check Cargo.toml for `base64`.
-                                // Prompt says "No network", "Embedded Base64".
-                                // I'll skip actual decoding logic implementation detail here and assume placeholder
-                                // or implement a minimal decoder if `base64` is not present.
-                                // `base64` is NOT in Cargo.toml.
-                                // I'll put a placeholder TODO or use a hack.
-                                None // TODO
+                                match BASE64_STANDARD.decode(split[1]) {
+                                    Ok(bytes) => Some(bytes),
+                                    Err(e) => {
+                                        eprintln!("Lottie Error: Failed to decode embedded image: {}", e);
+                                        None
+                                    }
+                                }
                             } else {
                                 None
                             }
@@ -2528,4 +2526,78 @@ fn test_text_animator() {
         let mask = &masks[0];
         assert_eq!(mask.inverted, true);
         assert!((mask.expansion - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_embedded_base64_image() {
+        // 1x1 Red PNG
+        let base64_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        // Expected bytes (decoded)
+        let expected_bytes = BASE64_STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==").unwrap();
+
+        let asset = data::Asset {
+            id: "img_b64".to_string(),
+            w: Some(1),
+            h: Some(1),
+            nm: None,
+            layers: None,
+            u: None,
+            p: Some(base64_png.to_string()),
+            e: None,
+        };
+
+        let layer = data::Layer {
+            ty: 2, // Image
+            ind: Some(1),
+            parent: None,
+            nm: Some("Base64 Image".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ef: None,
+            ref_id: Some("img_b64".to_string()),
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: None,
+        };
+
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![layer],
+            assets: vec![asset],
+        };
+
+        let external = HashMap::new();
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let tree = builder.build();
+
+        let root = tree.root;
+        if let NodeContent::Group(children) = root.content {
+            assert_eq!(children.len(), 1);
+            let node = &children[0];
+            if let NodeContent::Image(img) = &node.content {
+                assert_eq!(img.width, 1);
+                assert_eq!(img.height, 1);
+                assert!(img.data.is_some());
+                assert_eq!(img.data.as_ref().unwrap(), &expected_bytes);
+            } else {
+                panic!("Expected Image content");
+            }
+        } else {
+            panic!("Expected Group content");
+        }
     }

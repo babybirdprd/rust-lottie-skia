@@ -10,3 +10,4 @@ serde_json.workspace = true
 glam.workspace = true
 kurbo.workspace = true
 thiserror.workspace = true
+base64 = "0.22.1"
