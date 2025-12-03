@@ -1,5 +1,5 @@
-use kurbo::{BezPath, PathEl, Point, Vec2, ParamCurve, ParamCurveArclen, ParamCurveDeriv};
 use glam::Vec2 as GlamVec2;
+use kurbo::{BezPath, ParamCurve, ParamCurveArclen, ParamCurveDeriv, PathEl, Point, Vec2};
 
 pub trait GeometryModifier {
     fn modify(&self, path: &mut BezPath);
@@ -92,7 +92,9 @@ impl GeometryModifier for ZigZagModifier {
             }
 
             // Rebuild
-            if points.is_empty() { continue; }
+            if points.is_empty() {
+                continue;
+            }
             new_path.move_to(points[0]);
 
             if self.smooth {
@@ -100,7 +102,7 @@ impl GeometryModifier for ZigZagModifier {
                 // Lottie "Smooth" ZigZag usually means the peaks are rounded.
                 // We can use standard cubic interpolation between points.
                 for i in 1..points.len() {
-                    let _prev = points[i-1];
+                    let _prev = points[i - 1];
                     let curr = points[i];
 
                     // Simple midpoint approx for smooth "wave"
@@ -124,7 +126,7 @@ impl GeometryModifier for ZigZagModifier {
                     // Retrieve tangent from walker (cached?)
                     // I'll skip complex smooth logic for this iteration to ensure compilation.
                     // I'll use LineTo for now even for Smooth, or maybe a simple Quad.
-                     new_path.line_to(curr);
+                    new_path.line_to(curr);
                 }
             } else {
                 for p in points.iter().skip(1) {
@@ -147,7 +149,6 @@ fn sub_path_length(path: &BezPath) -> f64 {
     walker.total_length
 }
 
-
 // ================================================================================================
 // Pucker & Bloat
 // ================================================================================================
@@ -159,7 +160,9 @@ pub struct PuckerBloatModifier {
 
 impl GeometryModifier for PuckerBloatModifier {
     fn modify(&self, path: &mut BezPath) {
-        if self.amount == 0.0 { return; }
+        if self.amount == 0.0 {
+            return;
+        }
 
         // Lottie Pucker/Bloat:
         // Modifies the length of tangents (control points) and moves vertices?
@@ -221,9 +224,9 @@ impl GeometryModifier for PuckerBloatModifier {
                     new_path.curve_to(np1, np2, np3);
                 }
                 PathEl::QuadTo(p1, p2) => {
-                     let np1 = center + (*p1 - center) * c_scale;
-                     let np2 = center + (*p2 - center) * p_scale;
-                     new_path.quad_to(np1, np2);
+                    let np1 = center + (*p1 - center) * c_scale;
+                    let np2 = center + (*p2 - center) * p_scale;
+                    new_path.quad_to(np1, np2);
                 }
                 PathEl::ClosePath => {
                     new_path.close_path();
@@ -250,7 +253,9 @@ pub struct TwistModifier {
 
 impl GeometryModifier for TwistModifier {
     fn modify(&self, path: &mut BezPath) {
-        if self.angle == 0.0 { return; }
+        if self.angle == 0.0 {
+            return;
+        }
 
         let center = Point::new(self.center.x as f64, self.center.y as f64);
         let angle_rad = self.angle.to_radians() as f64;
@@ -263,7 +268,9 @@ impl GeometryModifier for TwistModifier {
         let transform_point = |p: Point| -> Point {
             let vec = p - center;
             let dist = vec.hypot();
-            if dist < 0.001 { return p; }
+            if dist < 0.001 {
+                return p;
+            }
 
             let theta = angle_rad * (dist / radius);
             let (sin, cos) = theta.sin_cos();
@@ -280,9 +287,11 @@ impl GeometryModifier for TwistModifier {
             match el {
                 PathEl::MoveTo(p) => new_path.move_to(transform_point(*p)),
                 PathEl::LineTo(p) => new_path.line_to(transform_point(*p)),
-                PathEl::CurveTo(p1, p2, p3) => {
-                    new_path.curve_to(transform_point(*p1), transform_point(*p2), transform_point(*p3))
-                }
+                PathEl::CurveTo(p1, p2, p3) => new_path.curve_to(
+                    transform_point(*p1),
+                    transform_point(*p2),
+                    transform_point(*p3),
+                ),
                 PathEl::QuadTo(p1, p2) => {
                     new_path.quad_to(transform_point(*p1), transform_point(*p2))
                 }
@@ -300,14 +309,16 @@ impl GeometryModifier for TwistModifier {
 pub struct WiggleModifier {
     pub seed: f32,
     pub time: f32,
-    pub speed: f32, // wiggles/sec
+    pub speed: f32,  // wiggles/sec
     pub amount: f32, // size
     pub correlation: f32,
 }
 
 impl GeometryModifier for WiggleModifier {
     fn modify(&self, path: &mut BezPath) {
-        if self.amount == 0.0 { return; }
+        if self.amount == 0.0 {
+            return;
+        }
 
         // Noise function
         // time * speed
@@ -320,39 +331,37 @@ impl GeometryModifier for WiggleModifier {
         let mut idx = 0;
 
         let noise = |idx: usize, offset: f32| -> Vec2 {
-             // Simple noise: hash(idx, seed, t)
-             // We want smooth noise over t.
-             // Lerp(Hash(floor(t)), Hash(ceil(t)), fract(t))
+            // Simple noise: hash(idx, seed, t)
+            // We want smooth noise over t.
+            // Lerp(Hash(floor(t)), Hash(ceil(t)), fract(t))
 
-             let input = t + offset; // Offset by vertex/correlation
-             let t_i = input.floor();
-             let t_f = input - t_i;
+            let input = t + offset; // Offset by vertex/correlation
+            let t_i = input.floor();
+            let t_f = input - t_i;
 
-             // Hash function
-             let h = |k: f32| -> f32 {
-                 ((k * 12.9898 + self.seed).sin() * 43758.5453).fract()
-             };
+            // Hash function
+            let h = |k: f32| -> f32 { ((k * 12.9898 + self.seed).sin() * 43758.5453).fract() };
 
-             let n1 = h(t_i);
-             let n2 = h(t_i + 1.0);
-             let _val = n1 + (n2 - n1) * t_f; // Linear. Cubic is better but Linear ok for now.
+            let n1 = h(t_i);
+            let n2 = h(t_i + 1.0);
+            let _val = n1 + (n2 - n1) * t_f; // Linear. Cubic is better but Linear ok for now.
 
-             // Map 0..1 to -1..1
-             // let v = (val - 0.5) * 2.0; // Unused
+            // Map 0..1 to -1..1
+            // let v = (val - 0.5) * 2.0; // Unused
 
-             // We need 2D displacement.
-             // Use different seeds for X and Y.
-             let hx = |k: f32| -> f32 {
-                 ((k * 12.9898 + self.seed + (idx as f32) * 1.1).sin() * 43758.5453).fract()
-             };
-             let hy = |k: f32| -> f32 {
-                 ((k * 78.233 + self.seed + (idx as f32) * 1.7).sin() * 43758.5453).fract()
-             };
+            // We need 2D displacement.
+            // Use different seeds for X and Y.
+            let hx = |k: f32| -> f32 {
+                ((k * 12.9898 + self.seed + (idx as f32) * 1.1).sin() * 43758.5453).fract()
+            };
+            let hy = |k: f32| -> f32 {
+                ((k * 78.233 + self.seed + (idx as f32) * 1.7).sin() * 43758.5453).fract()
+            };
 
-             let rx = hx(t_i) + (hx(t_i + 1.0) - hx(t_i)) * t_f;
-             let ry = hy(t_i) + (hy(t_i + 1.0) - hy(t_i)) * t_f;
+            let rx = hx(t_i) + (hx(t_i + 1.0) - hx(t_i)) * t_f;
+            let ry = hy(t_i) + (hy(t_i + 1.0) - hy(t_i)) * t_f;
 
-             Vec2::new((rx as f64 - 0.5) * 2.0, (ry as f64 - 0.5) * 2.0)
+            Vec2::new((rx as f64 - 0.5) * 2.0, (ry as f64 - 0.5) * 2.0)
         };
 
         // Logic for correlation?
@@ -367,7 +376,7 @@ impl GeometryModifier for WiggleModifier {
         // Let's use `offset` parameter in noise logic.
 
         // Iterate
-         for el in path.elements() {
+        for el in path.elements() {
             match el {
                 PathEl::MoveTo(p) => {
                     let d = noise(idx, 0.0) * self.amount as f64;
@@ -381,14 +390,14 @@ impl GeometryModifier for WiggleModifier {
                 }
                 PathEl::CurveTo(p1, p2, p3) => {
                     let d1 = noise(idx, 0.1) * self.amount as f64;
-                    let d2 = noise(idx+1, 0.2) * self.amount as f64; // Control points wiggle too?
-                    let d3 = noise(idx+2, 0.0) * self.amount as f64;
+                    let d2 = noise(idx + 1, 0.2) * self.amount as f64; // Control points wiggle too?
+                    let d3 = noise(idx + 2, 0.0) * self.amount as f64;
                     new_path.curve_to(*p1 + d1, *p2 + d2, *p3 + d3);
                     idx += 3;
                 }
                 PathEl::QuadTo(p1, p2) => {
                     let d1 = noise(idx, 0.1) * self.amount as f64;
-                    let d2 = noise(idx+1, 0.0) * self.amount as f64;
+                    let d2 = noise(idx + 1, 0.0) * self.amount as f64;
                     new_path.quad_to(*p1 + d1, *p2 + d2);
                     idx += 2;
                 }
@@ -400,7 +409,6 @@ impl GeometryModifier for WiggleModifier {
         *path = new_path;
     }
 }
-
 
 // ================================================================================================
 // Offset Path
@@ -417,7 +425,6 @@ impl GeometryModifier for OffsetPathModifier {
         // Pass-through
     }
 }
-
 
 // Helpers
 
@@ -442,30 +449,33 @@ impl<'a> PathWalker<'a> {
         // For now, I'll calculate simple length.
         let mut last = Point::ZERO;
         for el in path.elements() {
-             match el {
-                 PathEl::MoveTo(p) => last = *p,
-                 PathEl::LineTo(p) => {
-                     len += p.distance(last);
-                     last = *p;
-                 }
-                 PathEl::CurveTo(p1, p2, p3) => {
-                     // ArcLen
-                     use kurbo::CubicBez;
-                     let c = CubicBez::new(last, *p1, *p2, *p3);
-                     len += c.arclen(0.1);
-                     last = *p3;
-                 }
-                 PathEl::QuadTo(p1, p2) => {
-                     use kurbo::QuadBez;
-                     let q = QuadBez::new(last, *p1, *p2);
-                     len += q.arclen(0.1);
-                     last = *p2;
-                 }
-                 _ => {}
-             }
+            match el {
+                PathEl::MoveTo(p) => last = *p,
+                PathEl::LineTo(p) => {
+                    len += p.distance(last);
+                    last = *p;
+                }
+                PathEl::CurveTo(p1, p2, p3) => {
+                    // ArcLen
+                    use kurbo::CubicBez;
+                    let c = CubicBez::new(last, *p1, *p2, *p3);
+                    len += c.arclen(0.1);
+                    last = *p3;
+                }
+                PathEl::QuadTo(p1, p2) => {
+                    use kurbo::QuadBez;
+                    let q = QuadBez::new(last, *p1, *p2);
+                    len += q.arclen(0.1);
+                    last = *p2;
+                }
+                _ => {}
+            }
         }
 
-        Self { path, total_length: len }
+        Self {
+            path,
+            total_length: len,
+        }
     }
 
     fn sample(&mut self, dist: f64) -> Option<(Point, Vec2)> {
@@ -475,55 +485,55 @@ impl<'a> PathWalker<'a> {
         let mut last = Point::ZERO;
 
         for el in self.path.elements() {
-             match el {
-                 PathEl::MoveTo(p) => last = *p,
-                 PathEl::LineTo(p) => {
-                     let seg_len = p.distance(last);
-                     if current_dist + seg_len >= dist {
-                         let t = (dist - current_dist) / seg_len;
-                         let pos = last.lerp(*p, t);
-                         let tangent = *p - last; // normalized?
-                         let norm_tangent = tangent.normalize();
-                         return Some((pos, norm_tangent));
-                     }
-                     current_dist += seg_len;
-                     last = *p;
-                 }
-                 PathEl::CurveTo(p1, p2, p3) => {
-                     use kurbo::CubicBez;
-                     let c = CubicBez::new(last, *p1, *p2, *p3);
-                     let seg_len = c.arclen(0.1);
-                     if current_dist + seg_len >= dist {
-                         // We need t for arclen. Inverse arclen?
-                         // Kurbo doesn't have inv_arclen easily visible?
-                         // Approx: linear t.
-                         let t = (dist - current_dist) / seg_len;
-                         // This is uniform t, not uniform distance.
-                         // For ZigZag, uniform distance is better, but uniform t is acceptable fallback.
-                         let pos = c.eval(t);
-                         let deriv = c.deriv().eval(t);
-                         let tangent = deriv.to_vec2().normalize();
-                         return Some((pos, tangent));
-                     }
-                     current_dist += seg_len;
-                     last = *p3;
-                 }
-                 PathEl::QuadTo(p1, p2) => {
-                     use kurbo::QuadBez;
-                     let q = QuadBez::new(last, *p1, *p2);
-                     let seg_len = q.arclen(0.1);
-                     if current_dist + seg_len >= dist {
-                         let t = (dist - current_dist) / seg_len;
-                         let pos = q.eval(t);
-                         let deriv = q.deriv().eval(t);
-                         let tangent = deriv.to_vec2().normalize();
-                         return Some((pos, tangent));
-                     }
-                     current_dist += seg_len;
-                     last = *p2;
-                 }
-                 _ => {}
-             }
+            match el {
+                PathEl::MoveTo(p) => last = *p,
+                PathEl::LineTo(p) => {
+                    let seg_len = p.distance(last);
+                    if current_dist + seg_len >= dist {
+                        let t = (dist - current_dist) / seg_len;
+                        let pos = last.lerp(*p, t);
+                        let tangent = *p - last; // normalized?
+                        let norm_tangent = tangent.normalize();
+                        return Some((pos, norm_tangent));
+                    }
+                    current_dist += seg_len;
+                    last = *p;
+                }
+                PathEl::CurveTo(p1, p2, p3) => {
+                    use kurbo::CubicBez;
+                    let c = CubicBez::new(last, *p1, *p2, *p3);
+                    let seg_len = c.arclen(0.1);
+                    if current_dist + seg_len >= dist {
+                        // We need t for arclen. Inverse arclen?
+                        // Kurbo doesn't have inv_arclen easily visible?
+                        // Approx: linear t.
+                        let t = (dist - current_dist) / seg_len;
+                        // This is uniform t, not uniform distance.
+                        // For ZigZag, uniform distance is better, but uniform t is acceptable fallback.
+                        let pos = c.eval(t);
+                        let deriv = c.deriv().eval(t);
+                        let tangent = deriv.to_vec2().normalize();
+                        return Some((pos, tangent));
+                    }
+                    current_dist += seg_len;
+                    last = *p3;
+                }
+                PathEl::QuadTo(p1, p2) => {
+                    use kurbo::QuadBez;
+                    let q = QuadBez::new(last, *p1, *p2);
+                    let seg_len = q.arclen(0.1);
+                    if current_dist + seg_len >= dist {
+                        let t = (dist - current_dist) / seg_len;
+                        let pos = q.eval(t);
+                        let deriv = q.deriv().eval(t);
+                        let tangent = deriv.to_vec2().normalize();
+                        return Some((pos, tangent));
+                    }
+                    current_dist += seg_len;
+                    last = *p2;
+                }
+                _ => {}
+            }
         }
         None
     }

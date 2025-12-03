@@ -3,10 +3,13 @@ pub mod modifiers;
 pub mod renderer;
 
 use animatable::Animator;
-use modifiers::{GeometryModifier, ZigZagModifier, PuckerBloatModifier, TwistModifier, WiggleModifier, OffsetPathModifier};
 use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, Point, Shape as _};
 use lottie_data::model::{self as data, LottieJson};
+use modifiers::{
+    GeometryModifier, OffsetPathModifier, PuckerBloatModifier, TwistModifier, WiggleModifier,
+    ZigZagModifier,
+};
 pub use renderer::*;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
@@ -27,7 +30,7 @@ enum GeometryKind {
 
 impl PendingGeometry {
     fn to_path(&self, builder: &SceneGraphBuilder) -> BezPath {
-         let mut path = match &self.kind {
+        let mut path = match &self.kind {
             GeometryKind::Path(p) => p.clone(),
             GeometryKind::Rect { size, pos, radius } => {
                 let half = *size / 2.0;
@@ -67,7 +70,6 @@ impl PendingGeometry {
         path.apply_affine(affine);
         path
     }
-
 }
 
 #[derive(Clone, Copy)]
@@ -79,7 +81,7 @@ struct PolystarParams {
     _inner_roundness: f32,
     rotation: f32,
     points: f32,
-    kind: u8, // 1=star, 2=polygon
+    kind: u8,           // 1=star, 2=polygon
     corner_radius: f32, // From RoundCorners modifier
 }
 
@@ -124,7 +126,9 @@ impl LottiePlayer {
     }
 
     pub fn advance(&mut self, dt: f32) {
-        if self.model.is_none() { return; }
+        if self.model.is_none() {
+            return;
+        }
         // dt is in seconds
         let frames = dt * self.frame_rate;
         self.current_frame += frames;
@@ -132,7 +136,8 @@ impl LottiePlayer {
         // Loop
         if self.current_frame >= self.model.as_ref().unwrap().op {
             let duration = self.model.as_ref().unwrap().op - self.model.as_ref().unwrap().ip;
-            self.current_frame = self.model.as_ref().unwrap().ip + (self.current_frame - self.model.as_ref().unwrap().op) % duration;
+            self.current_frame = self.model.as_ref().unwrap().ip
+                + (self.current_frame - self.model.as_ref().unwrap().op) % duration;
         }
     }
 
@@ -168,7 +173,11 @@ struct SceneGraphBuilder<'a> {
 }
 
 impl<'a> SceneGraphBuilder<'a> {
-    fn new(model: &'a LottieJson, frame: f32, external_assets: &'a HashMap<String, ImageSource>) -> Self {
+    fn new(
+        model: &'a LottieJson,
+        frame: f32,
+        external_assets: &'a HashMap<String, ImageSource>,
+    ) -> Self {
         let mut assets = HashMap::new();
         for asset in &model.assets {
             assets.insert(asset.id.clone(), asset);
@@ -266,7 +275,11 @@ impl<'a> SceneGraphBuilder<'a> {
         }
     }
 
-    fn process_layer(&mut self, layer: &'a data::Layer, layer_map: &HashMap<u32, &'a data::Layer>) -> Option<RenderNode> {
+    fn process_layer(
+        &mut self,
+        layer: &'a data::Layer,
+        layer_map: &HashMap<u32, &'a data::Layer>,
+    ) -> Option<RenderNode> {
         let is_adjustment_layer = layer.ao == Some(1);
 
         // Visibility check (in/out points)
@@ -506,7 +519,8 @@ impl<'a> SceneGraphBuilder<'a> {
                     };
 
                     // We need to recursively build the composition.
-                    let mut sub_builder = SceneGraphBuilder::new(self.model, local_frame, self.external_assets);
+                    let mut sub_builder =
+                        SceneGraphBuilder::new(self.model, local_frame, self.external_assets);
                     let root = sub_builder.build_composition(layers);
                     // The root returned is a Group. We can unwrap it or wrap it.
                     // BUT, precomp layers transform apply to the group.
@@ -516,7 +530,9 @@ impl<'a> SceneGraphBuilder<'a> {
                 } else {
                     // Image
                     // Check external assets first
-                    let data = if let Some(ImageSource::Data(bytes)) = self.external_assets.get(&asset.id) {
+                    let data = if let Some(ImageSource::Data(bytes)) =
+                        self.external_assets.get(&asset.id)
+                    {
                         Some(bytes.clone())
                     } else if let Some(p) = &asset.p {
                         if p.starts_with("data:image") {
@@ -558,38 +574,38 @@ impl<'a> SceneGraphBuilder<'a> {
                     })
                 }
             } else {
-                 NodeContent::Group(vec![])
+                NodeContent::Group(vec![])
             }
         } else if let Some(color) = &layer.color {
             // Solid
             // Parse hex color?
             // "sc": "#rrggbb"
             // Simple solid rect
-             let w = layer.sw.unwrap_or(100) as f64;
-             let h = layer.sh.unwrap_or(100) as f64;
-             let mut path = BezPath::new();
-             path.move_to((0.0, 0.0));
-             path.line_to((w, 0.0));
-             path.line_to((w, h));
-             path.line_to((0.0, h));
-             path.close_path();
+            let w = layer.sw.unwrap_or(100) as f64;
+            let h = layer.sh.unwrap_or(100) as f64;
+            let mut path = BezPath::new();
+            path.move_to((0.0, 0.0));
+            path.line_to((w, 0.0));
+            path.line_to((w, h));
+            path.line_to((0.0, h));
+            path.close_path();
 
-             // Hex parse
-             let c_str = color.trim_start_matches('#');
-             let r = u8::from_str_radix(&c_str[0..2], 16).unwrap_or(0) as f32 / 255.0;
-             let g = u8::from_str_radix(&c_str[2..4], 16).unwrap_or(0) as f32 / 255.0;
-             let b = u8::from_str_radix(&c_str[4..6], 16).unwrap_or(0) as f32 / 255.0;
+            // Hex parse
+            let c_str = color.trim_start_matches('#');
+            let r = u8::from_str_radix(&c_str[0..2], 16).unwrap_or(0) as f32 / 255.0;
+            let g = u8::from_str_radix(&c_str[2..4], 16).unwrap_or(0) as f32 / 255.0;
+            let b = u8::from_str_radix(&c_str[4..6], 16).unwrap_or(0) as f32 / 255.0;
 
-             NodeContent::Shape(renderer::Shape {
-                 geometry: path,
-                 fill: Some(Fill {
-                     paint: Paint::Solid(Vec4::new(r, g, b, 1.0)),
-                     opacity: 1.0,
-                     rule: FillRule::NonZero,
-                 }),
-                 stroke: None,
-                 trim: None,
-             })
+            NodeContent::Shape(renderer::Shape {
+                geometry: path,
+                fill: Some(Fill {
+                    paint: Paint::Solid(Vec4::new(r, g, b, 1.0)),
+                    opacity: 1.0,
+                    rule: FillRule::NonZero,
+                }),
+                stroke: None,
+                trim: None,
+            })
         } else {
             NodeContent::Group(vec![])
         };
@@ -601,6 +617,9 @@ impl<'a> SceneGraphBuilder<'a> {
             vec![]
         };
 
+        // Effects
+        let effects = self.process_effects(layer);
+
         Some(RenderNode {
             transform,
             alpha: opacity,
@@ -608,9 +627,182 @@ impl<'a> SceneGraphBuilder<'a> {
             content,
             masks,
             matte: None,
-            effects: vec![],
+            effects,
             is_adjustment_layer,
         })
+    }
+
+    fn process_effects(&self, layer: &data::Layer) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if let Some(ef_list) = &layer.ef {
+            for ef in ef_list {
+                if let Some(en) = ef.en {
+                    if en == 0 {
+                        continue;
+                    }
+                }
+                let ty = ef.ty.unwrap_or(0);
+                let values = if let Some(vals) = &ef.ef {
+                    vals
+                } else {
+                    continue;
+                };
+
+                match ty {
+                    20 => {
+                        // Tint
+                        // 0: Black, 1: White, 2: Amount
+                        let black = self.find_effect_vec4(values, 0, "Black", layer);
+                        let white = self.find_effect_vec4(values, 1, "White", layer);
+                        let amount = self.find_effect_scalar(values, 2, "Intensity", layer) / 100.0;
+                        effects.push(Effect::Tint {
+                            black,
+                            white,
+                            amount,
+                        });
+                    }
+                    21 => {
+                        // Fill
+                        // 2: Color, 6: Opacity
+                        let color = self.find_effect_vec4(values, 2, "Color", layer);
+                        let opacity = self.find_effect_scalar(values, 6, "Opacity", layer) / 100.0;
+                        effects.push(Effect::Fill { color, opacity });
+                    }
+                    22 => {
+                        // Stroke
+                        // 3: Color, 4: Size, 6: Opacity
+                        let color = self.find_effect_vec4(values, 3, "Color", layer);
+                        let width = self.find_effect_scalar(values, 4, "Brush Size", layer);
+                        let opacity = self.find_effect_scalar(values, 6, "Opacity", layer) / 100.0;
+                        effects.push(Effect::Stroke {
+                            color,
+                            width,
+                            opacity,
+                        });
+                    }
+                    23 => {
+                        // Tritone
+                        // 0: Highlights (bright), 1: Midtones (mid), 2: Shadows (dark)
+                        let highlights = self.find_effect_vec4(values, 0, "bright", layer);
+                        let midtones = self.find_effect_vec4(values, 1, "mid", layer);
+                        let shadows = self.find_effect_vec4(values, 2, "dark", layer);
+                        effects.push(Effect::Tritone {
+                            highlights,
+                            midtones,
+                            shadows,
+                        });
+                    }
+                    24 => {
+                        // Levels (Pro Levels)
+                        // 3: In Black, 4: In White, 5: Gamma, 6: Out Black, 7: Out White
+                        let in_black = self.find_effect_scalar(values, 3, "inblack", layer);
+                        let in_white = self.find_effect_scalar(values, 4, "inwhite", layer);
+                        let gamma = self.find_effect_scalar(values, 5, "gamma", layer);
+                        let out_black = self.find_effect_scalar(values, 6, "outblack", layer);
+                        let out_white = self.find_effect_scalar(values, 7, "outwhite", layer);
+                        effects.push(Effect::Levels {
+                            in_black,
+                            in_white,
+                            gamma,
+                            out_black,
+                            out_white,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        effects
+    }
+
+    fn find_effect_scalar(
+        &self,
+        values: &[data::EffectValue],
+        index: usize,
+        name_hint: &str,
+        layer: &data::Layer,
+    ) -> f32 {
+        // Try index first
+        if let Some(v) = values.get(index) {
+            if let Some(prop) = &v.v {
+                // Check if it looks valid or if we should fallback?
+                // Assuming index is reliable for standard effects.
+                return self.resolve_json_scalar(prop, self.frame - layer.st);
+            }
+        }
+        // Try name
+        for v in values {
+            if let Some(nm) = &v.nm {
+                if nm.contains(name_hint) {
+                    if let Some(prop) = &v.v {
+                        return self.resolve_json_scalar(prop, self.frame - layer.st);
+                    }
+                }
+            }
+        }
+        0.0
+    }
+
+    fn find_effect_vec4(
+        &self,
+        values: &[data::EffectValue],
+        index: usize,
+        name_hint: &str,
+        layer: &data::Layer,
+    ) -> Vec4 {
+        // Try index
+        if let Some(v) = values.get(index) {
+            if let Some(prop) = &v.v {
+                return self.resolve_json_vec4(prop, self.frame - layer.st);
+            }
+        }
+        // Try name
+        for v in values {
+            if let Some(nm) = &v.nm {
+                if nm.contains(name_hint) {
+                    if let Some(prop) = &v.v {
+                        return self.resolve_json_vec4(prop, self.frame - layer.st);
+                    }
+                }
+            }
+        }
+        Vec4::ZERO
+    }
+
+    fn resolve_json_scalar(&self, prop: &data::Property<serde_json::Value>, frame: f32) -> f32 {
+        Animator::resolve(
+            prop,
+            frame,
+            |v| {
+                if let Some(n) = v.as_f64() {
+                    n as f32
+                } else if let Some(arr) = v.as_array() {
+                    arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32
+                } else {
+                    0.0
+                }
+            },
+            0.0,
+        )
+    }
+
+    fn resolve_json_vec4(&self, prop: &data::Property<serde_json::Value>, frame: f32) -> Vec4 {
+        Animator::resolve(
+            prop,
+            frame,
+            |v| {
+                if let Some(arr) = v.as_array() {
+                    let r = arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                    let g = arr.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                    let b = arr.get(2).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                    let a = arr.get(3).and_then(|x| x.as_f64()).unwrap_or(1.0) as f32;
+                    Vec4::new(r, g, b, a)
+                } else {
+                    Vec4::ZERO
+                }
+            },
+            Vec4::ZERO,
+        )
     }
 
     fn resolve_transform(&self, layer: &data::Layer, map: &HashMap<u32, &data::Layer>) -> Mat3 {
@@ -630,7 +822,9 @@ impl<'a> SceneGraphBuilder<'a> {
 
         let anchor = Animator::resolve(&ks.a, t_frame, |v| Vec2::from_slice(v), Vec2::ZERO);
         let pos = match &ks.p {
-            data::PositionProperty::Unified(p) => Animator::resolve(p, t_frame, |v| Vec2::from_slice(v), Vec2::ZERO),
+            data::PositionProperty::Unified(p) => {
+                Animator::resolve(p, t_frame, |v| Vec2::from_slice(v), Vec2::ZERO)
+            }
             data::PositionProperty::Split { x, y } => {
                 let px = Animator::resolve(x, t_frame, |v| *v, 0.0);
                 let py = Animator::resolve(y, t_frame, |v| *v, 0.0);
@@ -786,25 +980,23 @@ impl<'a> SceneGraphBuilder<'a> {
                 }
                 data::Shape::Twist(tw) => {
                     let angle = Animator::resolve(&tw.a, frame, |v| *v, 0.0);
-                    let center = Animator::resolve(&tw.c, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let center =
+                        Animator::resolve(&tw.c, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
 
-                    let modifier = TwistModifier {
-                        angle,
-                        center,
-                    };
+                    let modifier = TwistModifier { angle, center };
                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::OffsetPath(op) => {
-                     let amount = Animator::resolve(&op.a, frame, |v| *v, 0.0);
-                     let miter_limit = op.ml.unwrap_or(4.0);
-                     let line_join = op.lj;
+                    let amount = Animator::resolve(&op.a, frame, |v| *v, 0.0);
+                    let miter_limit = op.ml.unwrap_or(4.0);
+                    let line_join = op.lj;
 
-                     let modifier = OffsetPathModifier {
-                         amount,
-                         miter_limit,
-                         line_join,
-                     };
-                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
+                    let modifier = OffsetPathModifier {
+                        amount,
+                        miter_limit,
+                        line_join,
+                    };
+                    self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::WigglePath(wg) => {
                     let speed = Animator::resolve(&wg.s, frame, |v| *v, 0.0);
@@ -916,14 +1108,19 @@ impl<'a> SceneGraphBuilder<'a> {
                     }
                 }
                 data::Shape::GradientFill(gf) => {
-                    let start = Animator::resolve(&gf.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let start =
+                        Animator::resolve(&gf.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     let end = Animator::resolve(&gf.e, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     let opacity = Animator::resolve(&gf.o, frame, |v| *v / 100.0, 1.0);
 
                     let raw_stops = Animator::resolve(&gf.g.k, frame, |v| v.clone(), Vec::new());
                     let stops = parse_gradient_stops(&raw_stops, gf.g.p as usize);
 
-                    let kind = if gf.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
+                    let kind = if gf.t == 1 {
+                        GradientKind::Linear
+                    } else {
+                        GradientKind::Radial
+                    };
 
                     for geom in &active_geometries {
                         let path = self.convert_geometry(geom);
@@ -954,7 +1151,8 @@ impl<'a> SceneGraphBuilder<'a> {
                     }
                 }
                 data::Shape::GradientStroke(gs) => {
-                    let start = Animator::resolve(&gs.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let start =
+                        Animator::resolve(&gs.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     let end = Animator::resolve(&gs.e, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     let width = Animator::resolve(&gs.w, frame, |v| *v, 1.0);
                     let opacity = Animator::resolve(&gs.o, frame, |v| *v / 100.0, 1.0);
@@ -962,26 +1160,34 @@ impl<'a> SceneGraphBuilder<'a> {
                     let raw_stops = Animator::resolve(&gs.g.k, frame, |v| v.clone(), Vec::new());
                     let stops = parse_gradient_stops(&raw_stops, gs.g.p as usize);
 
-                    let kind = if gs.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
+                    let kind = if gs.t == 1 {
+                        GradientKind::Linear
+                    } else {
+                        GradientKind::Radial
+                    };
 
                     let mut dash = None;
                     if !gs.d.is_empty() {
-                         let mut array = Vec::new();
-                         let mut offset = 0.0;
-                         for prop in &gs.d {
-                             match prop.n.as_deref() {
-                                 Some("o") => offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0),
-                                 Some("d") | Some("g") => array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0)),
-                                 _ => {}
-                             }
-                         }
-                         if !array.is_empty() {
-                             if array.len() % 2 != 0 {
-                                 let clone = array.clone();
-                                 array.extend(clone);
-                             }
-                             dash = Some(DashPattern { array, offset });
-                         }
+                        let mut array = Vec::new();
+                        let mut offset = 0.0;
+                        for prop in &gs.d {
+                            match prop.n.as_deref() {
+                                Some("o") => {
+                                    offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0)
+                                }
+                                Some("d") | Some("g") => {
+                                    array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0))
+                                }
+                                _ => {}
+                            }
+                        }
+                        if !array.is_empty() {
+                            if array.len() % 2 != 0 {
+                                let clone = array.clone();
+                                array.extend(clone);
+                            }
+                            dash = Some(DashPattern { array, offset });
+                        }
                     }
 
                     for geom in &active_geometries {
@@ -1002,8 +1208,16 @@ impl<'a> SceneGraphBuilder<'a> {
                                     }),
                                     width,
                                     opacity,
-                                    cap: match gs.lc { 1 => LineCap::Butt, 3 => LineCap::Square, _ => LineCap::Round },
-                                    join: match gs.lj { 1 => LineJoin::Miter, 3 => LineJoin::Bevel, _ => LineJoin::Round },
+                                    cap: match gs.lc {
+                                        1 => LineCap::Butt,
+                                        3 => LineCap::Square,
+                                        _ => LineCap::Round,
+                                    },
+                                    join: match gs.lj {
+                                        1 => LineJoin::Miter,
+                                        3 => LineJoin::Bevel,
+                                        _ => LineJoin::Round,
+                                    },
                                     miter_limit: gs.ml,
                                     dash: dash.clone(),
                                 }),
@@ -1026,21 +1240,21 @@ impl<'a> SceneGraphBuilder<'a> {
                         let mut array = Vec::new();
                         let mut offset = 0.0;
                         for prop in &s.d {
-                             match prop.n.as_deref() {
-                                 Some("o") => {
-                                     offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0);
-                                 }
-                                 Some("d") | Some("g") => {
-                                     array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0));
-                                 }
-                                 _ => {}
-                             }
+                            match prop.n.as_deref() {
+                                Some("o") => {
+                                    offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0);
+                                }
+                                Some("d") | Some("g") => {
+                                    array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0));
+                                }
+                                _ => {}
+                            }
                         }
                         if !array.is_empty() {
-                             if array.len() % 2 != 0 {
-                                 let clone = array.clone();
-                                 array.extend(clone);
-                             }
+                            if array.len() % 2 != 0 {
+                                let clone = array.clone();
+                                array.extend(clone);
+                            }
                             dash = Some(DashPattern { array, offset });
                         }
                     }
@@ -1058,8 +1272,16 @@ impl<'a> SceneGraphBuilder<'a> {
                                     paint: Paint::Solid(color),
                                     width,
                                     opacity,
-                                    cap: match s.lc { 1 => LineCap::Butt, 3 => LineCap::Square, _ => LineCap::Round },
-                                    join: match s.lj { 1 => LineJoin::Miter, 3 => LineJoin::Bevel, _ => LineJoin::Round },
+                                    cap: match s.lc {
+                                        1 => LineCap::Butt,
+                                        3 => LineCap::Square,
+                                        _ => LineCap::Round,
+                                    },
+                                    join: match s.lj {
+                                        1 => LineJoin::Miter,
+                                        3 => LineJoin::Bevel,
+                                        _ => LineJoin::Round,
+                                    },
                                     miter_limit: s.ml,
                                     dash: dash.clone(),
                                 }),
@@ -1082,7 +1304,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         masks: vec![],
                         matte: None,
                         effects: vec![],
-                            is_adjustment_layer: false,
+                        is_adjustment_layer: false,
                     });
                 }
                 _ => {}
@@ -1152,7 +1374,11 @@ impl<'a> SceneGraphBuilder<'a> {
         }
     }
 
-    fn apply_modifier_to_active(&self, active: &mut Vec<PendingGeometry>, modifier: &impl GeometryModifier) {
+    fn apply_modifier_to_active(
+        &self,
+        active: &mut Vec<PendingGeometry>,
+        modifier: &impl GeometryModifier,
+    ) {
         for geom in active.iter_mut() {
             // Bake to path if not already
             let mut path = geom.to_path(self);
@@ -1285,7 +1511,11 @@ impl<'a> SceneGraphBuilder<'a> {
             let p0 = path_data.v[i];
             let p1 = path_data.v[next_idx];
 
-            let o = if i < path_data.o.len() { path_data.o[i] } else { [0.0, 0.0] };
+            let o = if i < path_data.o.len() {
+                path_data.o[i]
+            } else {
+                [0.0, 0.0]
+            };
             let in_ = if next_idx < path_data.i.len() {
                 path_data.i[next_idx]
             } else {
@@ -1322,7 +1552,8 @@ impl<'a> SceneGraphBuilder<'a> {
                 _ => continue, // Skip unknown or None
             };
 
-            let path_data = Animator::resolve(&m.pt, frame, |v| v.clone(), data::BezierPath::default());
+            let path_data =
+                Animator::resolve(&m.pt, frame, |v| v.clone(), data::BezierPath::default());
             let geometry = self.convert_bezier_path(&path_data);
             let opacity = Animator::resolve(&m.o, frame, |v| *v / 100.0, 1.0);
 
@@ -1361,7 +1592,12 @@ fn parse_gradient_stops(raw: &[f32], color_count: usize) -> Vec<GradientStop> {
 
     let color_data_len = color_count * 4;
     // Parse Colors
-    for chunk in raw.iter().take(color_data_len).collect::<Vec<_>>().chunks(4) {
+    for chunk in raw
+        .iter()
+        .take(color_data_len)
+        .collect::<Vec<_>>()
+        .chunks(4)
+    {
         if chunk.len() == 4 {
             color_stops.push(ColorStop {
                 t: *chunk[0],
@@ -1487,26 +1723,47 @@ mod tests {
     #[test]
     fn test_polystar_generation() {
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![], assets: vec![]
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
         };
         let assets = HashMap::new();
         let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
 
         let star = data::Shape::Polystar(data::PolystarShape {
             nm: None,
-            p: data::PositionProperty::Unified(data::Property { k: data::Value::Static([50.0, 50.0]), ..Default::default() }),
-            or: data::Property { k: data::Value::Static(20.0), ..Default::default() },
+            p: data::PositionProperty::Unified(data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            }),
+            or: data::Property {
+                k: data::Value::Static(20.0),
+                ..Default::default()
+            },
             os: data::Property::default(),
             r: data::Property::default(),
-            pt: data::Property { k: data::Value::Static(5.0), ..Default::default() },
+            pt: data::Property {
+                k: data::Value::Static(5.0),
+                ..Default::default()
+            },
             sy: 1, // Star
-            ir: Some(data::Property { k: data::Value::Static(10.0), ..Default::default() }),
+            ir: Some(data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            }),
             is: None,
         });
 
         let fill = data::Shape::Fill(data::FillShape {
-             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
         });
 
         let shapes = vec![star, fill];
@@ -1525,7 +1782,7 @@ mod tests {
                 // Total elements: 11.
                 let count = s.geometry.elements().len();
                 assert_eq!(count, 11);
-            },
+            }
             _ => panic!("Expected Shape"),
         }
     }
@@ -1533,33 +1790,48 @@ mod tests {
     #[test]
     fn test_repeater_geometry() {
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![], assets: vec![]
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
         };
         let assets = HashMap::new();
         let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
 
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
-            s: data::Property { k: data::Value::Static([10.0, 10.0]), ..Default::default() },
+            s: data::Property {
+                k: data::Value::Static([10.0, 10.0]),
+                ..Default::default()
+            },
             p: data::Property::default(),
             r: data::Property::default(),
         });
 
         let repeater = data::Shape::Repeater(data::RepeaterShape {
             nm: None,
-            c: data::Property { k: data::Value::Static(3.0), ..Default::default() },
+            c: data::Property {
+                k: data::Value::Static(3.0),
+                ..Default::default()
+            },
             o: data::Property::default(),
             m: 0,
             tr: data::RepeaterTransform {
                 t: data::Transform::default(),
                 so: data::Property::default(),
                 eo: data::Property::default(),
-            }
+            },
         });
 
         let fill = data::Shape::Fill(data::FillShape {
-             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
         });
 
         let shapes = vec![rect, repeater, fill];
@@ -1595,6 +1867,7 @@ mod tests {
             tm: None,
             masks_properties: None,
             tt: None,
+            ef: None,
             ref_id: Some("image_0".to_string()),
             w: None,
             h: None,
@@ -1606,9 +1879,14 @@ mod tests {
         };
 
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 500, h: 500,
-             layers: vec![layer],
-             assets: vec![asset],
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 500,
+            h: 500,
+            layers: vec![layer],
+            assets: vec![asset],
         };
 
         let mut player = LottiePlayer::new();
@@ -1627,22 +1905,28 @@ mod tests {
             assert_eq!(children.len(), 1);
             let child = &children[0];
             if let NodeContent::Image(img) = &child.content {
-                 assert_eq!(img.width, 100);
-                 assert_eq!(img.height, 100);
-                 assert_eq!(img.data, Some(dummy_data));
+                assert_eq!(img.width, 100);
+                assert_eq!(img.height, 100);
+                assert_eq!(img.data, Some(dummy_data));
             } else {
                 panic!("Expected Image content, got {:?}", child.content);
             }
         } else {
-             panic!("Expected Group content for root, got {:?}", root.content);
+            panic!("Expected Group content for root, got {:?}", root.content);
         }
     }
 
     #[test]
     fn test_zigzag_modifier() {
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![], assets: vec![]
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
         };
         let assets = HashMap::new();
         let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
@@ -1650,21 +1934,39 @@ mod tests {
         // Rect
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
-            s: data::Property { k: data::Value::Static([100.0, 100.0]), ..Default::default() },
-            p: data::Property { k: data::Value::Static([50.0, 50.0]), ..Default::default() },
+            s: data::Property {
+                k: data::Value::Static([100.0, 100.0]),
+                ..Default::default()
+            },
+            p: data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            },
             r: data::Property::default(),
         });
 
         // ZigZag
         let zigzag = data::Shape::ZigZag(data::ZigZagShape {
             nm: None,
-            r: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // 10 Ridges
-            s: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // Size 10
-            pt: data::Property { k: data::Value::Static(1.0), ..Default::default() }, // Corner
+            r: data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            }, // 10 Ridges
+            s: data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            }, // Size 10
+            pt: data::Property {
+                k: data::Value::Static(1.0),
+                ..Default::default()
+            }, // Corner
         });
 
         let fill = data::Shape::Fill(data::FillShape {
-             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
         });
 
         let shapes = vec![rect, zigzag, fill];
@@ -1682,7 +1984,7 @@ mod tests {
                 let count = s.geometry.elements().len();
                 println!("ZigZag element count: {}", count);
                 assert!(count > 5, "ZigZag should add points. Got {}", count);
-            },
+            }
             _ => panic!("Expected Shape"),
         }
     }
@@ -1692,8 +1994,14 @@ mod tests {
         // Wiggle modifier changes geometry based on time.
         // We test that geometry is different at t=0 vs t=1.
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![], assets: vec![]
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
         };
         let assets = HashMap::new();
         let builder1 = SceneGraphBuilder::new(&model, 0.0, &assets);
@@ -1701,21 +2009,36 @@ mod tests {
 
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
-            s: data::Property { k: data::Value::Static([100.0, 100.0]), ..Default::default() },
-            p: data::Property { k: data::Value::Static([50.0, 50.0]), ..Default::default() },
+            s: data::Property {
+                k: data::Value::Static([100.0, 100.0]),
+                ..Default::default()
+            },
+            p: data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            },
             r: data::Property::default(),
         });
 
         let wiggle = data::Shape::WigglePath(data::WigglePathShape {
             nm: None,
-            s: data::Property { k: data::Value::Static(10.0), ..Default::default() },
-            w: data::Property { k: data::Value::Static(10.0), ..Default::default() }, // Size > 0
+            s: data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            },
+            w: data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            }, // Size > 0
             r: data::Property::default(),
             sh: data::Property::default(),
         });
 
         let fill = data::Shape::Fill(data::FillShape {
-             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
         });
 
         let shapes = vec![rect, wiggle, fill];
@@ -1723,31 +2046,67 @@ mod tests {
         let nodes1 = builder1.process_shapes(&shapes, 0.0);
         let nodes2 = builder2.process_shapes(&shapes, 10.0);
 
-        let path1 = match &nodes1[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
-        let path2 = match &nodes2[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
+        let path1 = match &nodes1[0].content {
+            NodeContent::Shape(s) => &s.geometry,
+            _ => panic!(),
+        };
+        let path2 = match &nodes2[0].content {
+            NodeContent::Shape(s) => &s.geometry,
+            _ => panic!(),
+        };
 
         // Check if point positions differ
         // We can inspect elements
         // This relies on `kurbo` `BezPath` equality which is not derived?
         // Or inspect points.
 
-        let p1 = match path1.elements()[0] { PathEl::MoveTo(p) => p, _ => Point::ZERO };
-        let p2 = match path2.elements()[0] { PathEl::MoveTo(p) => p, _ => Point::ZERO };
+        let p1 = match path1.elements()[0] {
+            PathEl::MoveTo(p) => p,
+            _ => Point::ZERO,
+        };
+        let p2 = match path2.elements()[0] {
+            PathEl::MoveTo(p) => p,
+            _ => Point::ZERO,
+        };
 
         // Wiggle might affect MoveTo point if it wiggles vertices.
         // Note: Rect starts at corner.
-        assert_ne!(p1, p2, "Wiggle should displace points differently at different times");
+        assert_ne!(
+            p1, p2,
+            "Wiggle should displace points differently at different times"
+        );
     }
 
     #[test]
     fn test_time_remap() {
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
-            s: data::Property { k: data::Value::Static([10.0, 10.0]), ..Default::default() },
+            s: data::Property {
+                k: data::Value::Static([10.0, 10.0]),
+                ..Default::default()
+            },
             p: data::Property {
                 k: data::Value::Animated(vec![
-                    data::Keyframe { t: 0.0, s: Some([0.0, 0.0]), e: Some([100.0, 100.0]), i: None, o: None, to: None, ti: None, h: None },
-                    data::Keyframe { t: 60.0, s: Some([100.0, 100.0]), e: None, i: None, o: None, to: None, ti: None, h: None },
+                    data::Keyframe {
+                        t: 0.0,
+                        s: Some([0.0, 0.0]),
+                        e: Some([100.0, 100.0]),
+                        i: None,
+                        o: None,
+                        to: None,
+                        ti: None,
+                        h: None,
+                    },
+                    data::Keyframe {
+                        t: 60.0,
+                        s: Some([100.0, 100.0]),
+                        e: None,
+                        i: None,
+                        o: None,
+                        to: None,
+                        ti: None,
+                        h: None,
+                    },
                 ]),
                 ..Default::default()
             },
@@ -1755,7 +2114,10 @@ mod tests {
         });
 
         let fill = data::Shape::Fill(data::FillShape {
-             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
         });
 
         let inner_layer = data::Layer {
@@ -1771,13 +2133,26 @@ mod tests {
             tm: None,
             masks_properties: None,
             tt: None,
+            ef: None,
             ref_id: None,
-            w: None, h: None, color: None, sw: None, sh: None, shapes: Some(vec![rect, fill]), t: None,
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: Some(vec![rect, fill]),
+            t: None,
         };
 
         let asset = data::Asset {
             id: "precomp1".to_string(),
-            w: Some(100), h: Some(100), nm: None, layers: Some(vec![inner_layer]), u: None, p: None, e: None,
+            w: Some(100),
+            h: Some(100),
+            nm: None,
+            layers: Some(vec![inner_layer]),
+            u: None,
+            p: None,
+            e: None,
         };
 
         let precomp_layer = data::Layer {
@@ -1796,14 +2171,26 @@ mod tests {
             }),
             masks_properties: None,
             tt: None,
+            ef: None,
             ref_id: Some("precomp1".to_string()),
-            w: Some(100), h: Some(100), color: None, sw: None, sh: None, shapes: None, t: None,
+            w: Some(100),
+            h: Some(100),
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: None,
         };
 
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![precomp_layer],
-             assets: vec![asset],
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![precomp_layer],
+            assets: vec![asset],
         };
 
         let mut player = LottiePlayer::new();
@@ -1816,60 +2203,81 @@ mod tests {
             assert_eq!(l1.len(), 1);
             let precomp_node = &l1[0];
             if let NodeContent::Group(l2) = &precomp_node.content {
-                 assert_eq!(l2.len(), 1);
-                 let inner_node = &l2[0];
-                 if let NodeContent::Group(l3) = &inner_node.content {
-                      assert_eq!(l3.len(), 1);
-                      let shape_node = &l3[0];
-                      if let NodeContent::Shape(s) = &shape_node.content {
-                           if let PathEl::MoveTo(p) = s.geometry.elements()[0] {
-                               // Expect 45,45 (50 - 5)
-                               assert!((p.x - 45.0).abs() < 0.1, "Expected x=45, got {}", p.x);
-                               assert!((p.y - 45.0).abs() < 0.1, "Expected y=45, got {}", p.y);
-                           } else {
-                               panic!("Expected MoveTo");
-                           }
-                      } else { panic!("Expected Shape Content"); }
-                 } else { panic!("Expected Group (Shape Layer)"); }
-            } else { panic!("Expected Group (PreComp Content)"); }
-        } else { panic!("Expected Group (Root)"); }
+                assert_eq!(l2.len(), 1);
+                let inner_node = &l2[0];
+                if let NodeContent::Group(l3) = &inner_node.content {
+                    assert_eq!(l3.len(), 1);
+                    let shape_node = &l3[0];
+                    if let NodeContent::Shape(s) = &shape_node.content {
+                        if let PathEl::MoveTo(p) = s.geometry.elements()[0] {
+                            // Expect 45,45 (50 - 5)
+                            assert!((p.x - 45.0).abs() < 0.1, "Expected x=45, got {}", p.x);
+                            assert!((p.y - 45.0).abs() < 0.1, "Expected y=45, got {}", p.y);
+                        } else {
+                            panic!("Expected MoveTo");
+                        }
+                    } else {
+                        panic!("Expected Shape Content");
+                    }
+                } else {
+                    panic!("Expected Group (Shape Layer)");
+                }
+            } else {
+                panic!("Expected Group (PreComp Content)");
+            }
+        } else {
+            panic!("Expected Group (Root)");
+        }
     }
-}
 
     #[test]
-    fn test_text_animator() {
-        let text_doc = data::TextDocument {
-            t: "AB".to_string(),
-            f: "Arial".to_string(),
-            s: 50.0,
-            ..Default::default()
-        };
+    fn test_effects_parsing() {
+        use lottie_data::model::{Effect, EffectValue, Property, Value};
+        use serde_json::json;
+        use std::collections::HashMap;
 
-        // Animator: Scale 200% for first char (A)
-        // Selector 0-50% covers the first of 2 chars (0 to 1 in indices)
-        let animator = data::TextAnimatorData {
-            nm: Some("Anim".to_string()),
-            s: data::TextSelectorData {
-                s: Some(data::Property { k: data::Value::Static(0.0), ..Default::default() }),
-                e: Some(data::Property { k: data::Value::Static(50.0), ..Default::default() }),
-                o: None,
-            },
-            a: data::TextStyleData {
-                s: Some(data::Property { k: data::Value::Static([200.0, 200.0]), ..Default::default() }),
+        // Mock Effect Values
+        let black = EffectValue {
+            ty: Some(2),
+            nm: Some("Black".to_string()),
+            ix: None,
+            v: Some(Property {
+                k: Value::Static(json!([0.0, 0.0, 0.0, 1.0])),
                 ..Default::default()
-            },
+            }),
+        };
+        let white = EffectValue {
+            ty: Some(2),
+            nm: Some("White".to_string()),
+            ix: None,
+            v: Some(Property {
+                k: Value::Static(json!([1.0, 1.0, 1.0, 1.0])),
+                ..Default::default()
+            }),
+        };
+        let amount = EffectValue {
+            ty: Some(0),
+            nm: Some("Intensity".to_string()),
+            ix: None,
+            v: Some(Property {
+                k: Value::Static(json!(50.0)),
+                ..Default::default()
+            }),
         };
 
-        let text_data = data::TextData {
-            d: data::Property { k: data::Value::Static(text_doc), ..Default::default() },
-            a: Some(vec![animator]),
+        let tint_ef = Effect {
+            ty: Some(20),
+            nm: Some("Tint".to_string()),
+            ix: None,
+            en: Some(1),
+            ef: Some(vec![black, white, amount]),
         };
 
         let layer = data::Layer {
-            ty: 5,
+            ty: 4,
             ind: Some(1),
             parent: None,
-            nm: Some("Text".to_string()),
+            nm: Some("Layer".to_string()),
             ip: 0.0,
             op: 60.0,
             st: 0.0,
@@ -1879,38 +2287,206 @@ mod tests {
             masks_properties: None,
             tt: None,
             ref_id: None,
-            w: None, h: None, color: None, sw: None, sh: None, shapes: None,
-            t: Some(text_data),
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: Some(vec![]),
+            t: None,
+            ef: Some(vec![tint_ef]),
             ..data::Layer {
-                ty: 5, ind: None, parent: None, nm: None, ip: 0.0, op: 0.0, st: 0.0, ks: data::Transform::default(), ao: None, tm: None, masks_properties: None, tt: None, ref_id: None, w: None, h: None, color: None, sw: None, sh: None, shapes: None, t: None
+                ty: 4,
+                ind: None,
+                parent: None,
+                nm: None,
+                ip: 0.0,
+                op: 0.0,
+                st: 0.0,
+                ks: data::Transform::default(),
+                ao: None,
+                tm: None,
+                masks_properties: None,
+                tt: None,
+                ef: None,
+                ref_id: None,
+                w: None,
+                h: None,
+                color: None,
+                sw: None,
+                sh: None,
+                shapes: None,
+                t: None,
             }
         };
 
         let model = LottieJson {
-             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
-             layers: vec![layer],
-             assets: vec![],
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![layer],
+            assets: vec![],
         };
 
-        let mut player = LottiePlayer::new();
-        player.load(model);
+        let external = HashMap::new();
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let tree = builder.build();
 
-        let tree = player.render_tree();
         let root = tree.root;
-
-        if let NodeContent::Group(l1) = root.content {
-             let text_node = &l1[0];
-             if let NodeContent::Text(text) = &text_node.content {
-                 assert_eq!(text.glyphs.len(), 2);
-                 let ga = &text.glyphs[0];
-                 let gb = &text.glyphs[1];
-
-                 assert_eq!(ga.character, 'A');
-                 assert_eq!(gb.character, 'B');
-
-                 assert!((ga.scale.x - 2.0).abs() < 0.01, "Expected A scale 2.0, got {:?}", ga.scale);
-                 assert!((gb.scale.x - 1.0).abs() < 0.01, "Expected B scale 1.0, got {:?}", gb.scale);
-
-             } else { panic!("Expected Text Content"); }
-        } else { panic!("Expected Group (Root)"); }
+        if let NodeContent::Group(children) = root.content {
+            assert_eq!(children.len(), 1);
+            let node = &children[0];
+            assert_eq!(node.effects.len(), 1);
+            match &node.effects[0] {
+                renderer::Effect::Tint {
+                    black,
+                    white,
+                    amount,
+                } => {
+                    assert_eq!(black.x, 0.0);
+                    assert_eq!(white.x, 1.0);
+                    assert_eq!(*amount, 0.5);
+                }
+                _ => panic!("Expected Tint effect"),
+            }
+        } else {
+            panic!("Expected Group");
+        }
     }
+}
+
+#[test]
+fn test_text_animator() {
+    let text_doc = data::TextDocument {
+        t: "AB".to_string(),
+        f: "Arial".to_string(),
+        s: 50.0,
+        ..Default::default()
+    };
+
+    // Animator: Scale 200% for first char (A)
+    // Selector 0-50% covers the first of 2 chars (0 to 1 in indices)
+    let animator = data::TextAnimatorData {
+        nm: Some("Anim".to_string()),
+        s: data::TextSelectorData {
+            s: Some(data::Property {
+                k: data::Value::Static(0.0),
+                ..Default::default()
+            }),
+            e: Some(data::Property {
+                k: data::Value::Static(50.0),
+                ..Default::default()
+            }),
+            o: None,
+        },
+        a: data::TextStyleData {
+            s: Some(data::Property {
+                k: data::Value::Static([200.0, 200.0]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    };
+
+    let text_data = data::TextData {
+        d: data::Property {
+            k: data::Value::Static(text_doc),
+            ..Default::default()
+        },
+        a: Some(vec![animator]),
+    };
+
+    let layer = data::Layer {
+        ty: 5,
+        ind: Some(1),
+        parent: None,
+        nm: Some("Text".to_string()),
+        ip: 0.0,
+        op: 60.0,
+        st: 0.0,
+        ks: data::Transform::default(),
+        ao: None,
+        tm: None,
+        masks_properties: None,
+        tt: None,
+        ef: None,
+        ref_id: None,
+        w: None,
+        h: None,
+        color: None,
+        sw: None,
+        sh: None,
+        shapes: None,
+        t: Some(text_data),
+        ..data::Layer {
+            ty: 5,
+            ind: None,
+            parent: None,
+            nm: None,
+            ip: 0.0,
+            op: 0.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ef: None,
+            ref_id: None,
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: None,
+        }
+    };
+
+    let model = LottieJson {
+        v: None,
+        ip: 0.0,
+        op: 60.0,
+        fr: 60.0,
+        w: 100,
+        h: 100,
+        layers: vec![layer],
+        assets: vec![],
+    };
+
+    let mut player = LottiePlayer::new();
+    player.load(model);
+
+    let tree = player.render_tree();
+    let root = tree.root;
+
+    if let NodeContent::Group(l1) = root.content {
+        let text_node = &l1[0];
+        if let NodeContent::Text(text) = &text_node.content {
+            assert_eq!(text.glyphs.len(), 2);
+            let ga = &text.glyphs[0];
+            let gb = &text.glyphs[1];
+
+            assert_eq!(ga.character, 'A');
+            assert_eq!(gb.character, 'B');
+
+            assert!(
+                (ga.scale.x - 2.0).abs() < 0.01,
+                "Expected A scale 2.0, got {:?}",
+                ga.scale
+            );
+            assert!(
+                (gb.scale.x - 1.0).abs() < 0.01,
+                "Expected B scale 1.0, got {:?}",
+                gb.scale
+            );
+        } else {
+            panic!("Expected Text Content");
+        }
+    } else {
+        panic!("Expected Group (Root)");
+    }
+}

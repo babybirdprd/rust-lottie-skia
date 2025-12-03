@@ -114,83 +114,80 @@ fn main() {
 
     let mut last_frame = Instant::now();
 
-    event_loop.run(move |event, elwt| {
-        elwt.set_control_flow(ControlFlow::Poll);
+    event_loop
+        .run(move |event, elwt| {
+            elwt.set_control_flow(ControlFlow::Poll);
 
-        match event {
-            Event::AboutToWait => {
-                window.request_redraw();
-            }
-            Event::WindowEvent { event, window_id } if window_id == window.id() => {
-                match event {
-                    WindowEvent::CloseRequested => elwt.exit(),
-                    WindowEvent::RedrawRequested => {
-                        // Time delta
-                        let now = Instant::now();
-                        let dt = now.duration_since(last_frame).as_secs_f32();
-                        last_frame = now;
-
-                        player.advance(dt);
-
-                        // Resize softbuffer if needed
-                        let size = window.inner_size();
-                        if let Some(w) = NonZeroU32::new(size.width) {
-                            if let Some(h) = NonZeroU32::new(size.height) {
-                                 surface.resize(w, h).unwrap();
-                            }
-                        }
-
-                        // Render
-                        let mut buffer = surface.buffer_mut().unwrap();
-                        let width = size.width as i32;
-                        let height = size.height as i32;
-
-                        if width > 0 && height > 0 {
-                            // Create Skia Surface
-                            let info = ImageInfo::new(
-                                (width, height),
-                                ColorType::BGRA8888,
-                                AlphaType::Premul,
-                                Some(skia_safe::ColorSpace::new_srgb()),
-                            );
-
-                            let ptr = buffer.as_mut_ptr() as *mut u8;
-                            let len = (width * height * 4) as usize;
-                            let row_bytes = width as usize * 4;
-
-                            // Safety: Buffer is locked and valid for this scope.
-                            let pixels_u8 = unsafe {
-                                std::slice::from_raw_parts_mut(ptr, len)
-                            };
-
-                            let skia_surface = skia_safe::surfaces::wrap_pixels(
-                                    &info,
-                                    pixels_u8,
-                                    row_bytes,
-                                    None,
-                            );
-
-                            if let Some(mut skia_surface) = skia_surface {
-                                let canvas = skia_surface.canvas();
-                                canvas.clear(skia_safe::Color::WHITE);
-
-                                let tree = player.render_tree();
-
-                                SkiaRenderer::draw(
-                                    canvas,
-                                    &tree,
-                                    skia_safe::Rect::from_wh(width as f32, height as f32),
-                                    1.0,
-                                );
-                            }
-                        }
-
-                        buffer.present().unwrap();
-                    }
-                    _ => (),
+            match event {
+                Event::AboutToWait => {
+                    window.request_redraw();
                 }
+                Event::WindowEvent { event, window_id } if window_id == window.id() => {
+                    match event {
+                        WindowEvent::CloseRequested => elwt.exit(),
+                        WindowEvent::RedrawRequested => {
+                            // Time delta
+                            let now = Instant::now();
+                            let dt = now.duration_since(last_frame).as_secs_f32();
+                            last_frame = now;
+
+                            player.advance(dt);
+
+                            // Resize softbuffer if needed
+                            let size = window.inner_size();
+                            if let Some(w) = NonZeroU32::new(size.width) {
+                                if let Some(h) = NonZeroU32::new(size.height) {
+                                    surface.resize(w, h).unwrap();
+                                }
+                            }
+
+                            // Render
+                            let mut buffer = surface.buffer_mut().unwrap();
+                            let width = size.width as i32;
+                            let height = size.height as i32;
+
+                            if width > 0 && height > 0 {
+                                // Create Skia Surface
+                                let info = ImageInfo::new(
+                                    (width, height),
+                                    ColorType::BGRA8888,
+                                    AlphaType::Premul,
+                                    Some(skia_safe::ColorSpace::new_srgb()),
+                                );
+
+                                let ptr = buffer.as_mut_ptr() as *mut u8;
+                                let len = (width * height * 4) as usize;
+                                let row_bytes = width as usize * 4;
+
+                                // Safety: Buffer is locked and valid for this scope.
+                                let pixels_u8 = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
+
+                                let skia_surface = skia_safe::surfaces::wrap_pixels(
+                                    &info, pixels_u8, row_bytes, None,
+                                );
+
+                                if let Some(mut skia_surface) = skia_surface {
+                                    let canvas = skia_surface.canvas();
+                                    canvas.clear(skia_safe::Color::WHITE);
+
+                                    let tree = player.render_tree();
+
+                                    SkiaRenderer::draw(
+                                        canvas,
+                                        &tree,
+                                        skia_safe::Rect::from_wh(width as f32, height as f32),
+                                        1.0,
+                                    );
+                                }
+                            }
+
+                            buffer.present().unwrap();
+                        }
+                        _ => (),
+                    }
+                }
+                _ => (),
             }
-            _ => (),
-        }
-    }).unwrap();
+        })
+        .unwrap();
 }

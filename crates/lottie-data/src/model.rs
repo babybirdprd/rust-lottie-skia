@@ -41,6 +41,8 @@ pub struct Layer {
     pub masks_properties: Option<Vec<MaskProperties>>,
     #[serde(default)]
     pub tt: Option<u8>,
+    #[serde(default)]
+    pub ef: Option<Vec<Effect>>,
 
     // Type specific (flattened manually as optional fields)
     #[serde(default, rename = "refId")]
@@ -61,7 +63,9 @@ pub struct Layer {
     pub t: Option<TextData>, // Text Layer
 }
 
-fn default_one() -> f32 { 1.0 }
+fn default_one() -> f32 {
+    1.0
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MaskProperties {
@@ -73,6 +77,32 @@ pub struct MaskProperties {
     pub o: Property<f32>,
     #[serde(default)]
     pub nm: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Effect {
+    #[serde(default)]
+    pub ty: Option<u8>,
+    #[serde(default)]
+    pub nm: Option<String>,
+    #[serde(default)]
+    pub ix: Option<u32>,
+    #[serde(default)]
+    pub en: Option<u8>,
+    #[serde(default)]
+    pub ef: Option<Vec<EffectValue>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EffectValue {
+    #[serde(default)]
+    pub ty: Option<u8>,
+    #[serde(default)]
+    pub nm: Option<String>,
+    #[serde(default)]
+    pub ix: Option<u32>,
+    #[serde(default)]
+    pub v: Option<Property<serde_json::Value>>,
 }
 
 // Shapes
@@ -142,7 +172,7 @@ pub struct PuckerBloatShape {
 pub struct TwistShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub a: Property<f32>, // Angle
+    pub a: Property<f32>,  // Angle
     pub c: Property<Vec2>, // Center
 }
 
@@ -351,10 +381,7 @@ pub struct Transform {
 #[serde(untagged)]
 pub enum PositionProperty {
     Unified(Property<Vec2>),
-    Split {
-        x: Property<f32>,
-        y: Property<f32>,
-    },
+    Split { x: Property<f32>, y: Property<f32> },
 }
 
 impl Default for PositionProperty {

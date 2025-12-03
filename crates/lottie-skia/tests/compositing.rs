@@ -1,4 +1,4 @@
-use lottie_core::{LottiePlayer};
+use lottie_core::LottiePlayer;
 use lottie_data::model::LottieJson;
 use lottie_skia::SkiaRenderer;
 use skia_safe::{EncodedImageFormat, Rect, Surface};
