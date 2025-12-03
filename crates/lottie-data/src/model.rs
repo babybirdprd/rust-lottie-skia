@@ -76,6 +76,8 @@ pub struct MaskProperties {
     pub pt: Property<BezierPath>,
     pub o: Property<f32>,
     #[serde(default)]
+    pub x: Property<f32>,
+    #[serde(default)]
     pub nm: Option<String>,
 }
 
