@@ -693,10 +693,29 @@ impl<'a> SceneGraphBuilder<'a> {
                         let color = self.find_effect_vec4(values, 3, "Color", layer);
                         let width = self.find_effect_scalar(values, 4, "Brush Size", layer);
                         let opacity = self.find_effect_scalar(values, 6, "Opacity", layer) / 100.0;
+
+                        // Use 9999 to force name search since indices vary
+                        let all_masks_val =
+                            self.find_effect_scalar(values, 9999, "All Masks", layer);
+                        let all_masks = all_masks_val > 0.5;
+
+                        let mut mask_idx_val = self.find_effect_scalar(values, 9999, "Path", layer);
+                        if mask_idx_val < 0.5 {
+                            mask_idx_val = self.find_effect_scalar(values, 9999, "Mask", layer);
+                        }
+
+                        let mask_index = if mask_idx_val >= 0.5 {
+                            Some(mask_idx_val.round() as usize)
+                        } else {
+                            None
+                        };
+
                         effects.push(Effect::Stroke {
                             color,
                             width,
                             opacity,
+                            mask_index,
+                            all_masks,
                         });
                     }
                     23 => {
@@ -1581,13 +1600,14 @@ impl<'a> SceneGraphBuilder<'a> {
         for m in masks_props {
             // Check mode
             let mode = match m.mode.as_deref() {
+                Some("n") => MaskMode::None,
                 Some("a") => MaskMode::Add,
                 Some("s") => MaskMode::Subtract,
                 Some("i") => MaskMode::Intersect,
                 Some("l") => MaskMode::Lighten,
                 Some("d") => MaskMode::Darken,
                 Some("f") => MaskMode::Difference,
-                _ => continue, // Skip unknown or None
+                _ => continue, // Skip unknown
             };
 
             let path_data =
@@ -2484,7 +2504,7 @@ fn test_text_animator() {
             parent: None,
             nm: None,
             ip: 0.0,
-            op: 0.0,
+            op: 60.0,
             st: 0.0,
             ks: data::Transform::default(),
             ao: None,
@@ -2733,5 +2753,179 @@ fn test_text_animator() {
                 }
             },
             _ => panic!("Expected Shape Content"),
+        }
+    }
+
+    #[test]
+    fn test_stroke_effect_parsing_rfc009() {
+        use lottie_data::model::{Effect, EffectValue, Property, Value};
+        use serde_json::json;
+
+        // Mock Effect Values
+        let mut ef_vals = Vec::new();
+        // Pad 0-2
+        ef_vals.push(EffectValue { ty: None, nm: None, ix: None, v: None });
+        ef_vals.push(EffectValue { ty: None, nm: None, ix: None, v: None });
+        ef_vals.push(EffectValue { ty: None, nm: None, ix: None, v: None });
+
+        // Color (Index 3)
+        ef_vals.push(EffectValue {
+            ty: Some(2),
+            nm: Some("Color".to_string()),
+            ix: Some(3),
+            v: Some(Property {
+                k: Value::Static(json!([1.0, 0.0, 0.0, 1.0])),
+                ..Default::default()
+            }),
+        });
+
+        // Brush Size (Index 4)
+        ef_vals.push(EffectValue {
+            ty: Some(0),
+            nm: Some("Brush Size".to_string()),
+            ix: Some(4),
+            v: Some(Property {
+                k: Value::Static(json!(15.0)),
+                ..Default::default()
+            }),
+        });
+
+        // Pad 5
+        ef_vals.push(EffectValue { ty: None, nm: None, ix: None, v: None });
+        // Opacity (Index 6)
+        ef_vals.push(EffectValue {
+            ty: Some(0),
+            nm: Some("Opacity".to_string()),
+            ix: Some(6),
+            v: Some(Property {
+                k: Value::Static(json!(50.0)), // 50%
+                ..Default::default()
+            }),
+        });
+
+        // All Masks (Checkbox)
+        ef_vals.push(EffectValue {
+            ty: Some(4),
+            nm: Some("All Masks".to_string()),
+            ix: Some(99),
+            v: Some(Property {
+                k: Value::Static(json!(1)), // 1 = True
+                ..Default::default()
+            }),
+        });
+
+        // Path (Drop Down) - Should be ignored if All Masks is True, but we parse it anyway
+        ef_vals.push(EffectValue {
+            ty: Some(7),
+            nm: Some("Path".to_string()),
+            ix: Some(99),
+            v: Some(Property {
+                k: Value::Static(json!(2)), // Mask Index 2
+                ..Default::default()
+            }),
+        });
+
+        let stroke_ef = Effect {
+            ty: Some(22),
+            nm: Some("Stroke".to_string()),
+            ix: None,
+            en: Some(1),
+            ef: Some(ef_vals),
+        };
+
+        let layer = data::Layer {
+            ty: 4,
+            ind: Some(1),
+            ef: Some(vec![stroke_ef]),
+            parent: None,
+            nm: None,
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ref_id: None,
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: None,
+        };
+
+        let model = LottieJson {
+            layers: vec![layer],
+            w: 100,
+            h: 100,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            v: None,
+            assets: vec![],
+        };
+
+        let external = HashMap::new();
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let tree = builder.build();
+
+        let root = tree.root;
+        let node = match root.content {
+            NodeContent::Group(mut c) => c.remove(0),
+            _ => panic!("Expected Group"),
+        };
+
+        assert_eq!(node.effects.len(), 1);
+        if let renderer::Effect::Stroke {
+            color,
+            width,
+            opacity,
+            mask_index,
+            all_masks,
+        } = &node.effects[0]
+        {
+            assert_eq!(color.x, 1.0); // Red
+            assert_eq!(*width, 15.0);
+            assert_eq!(*opacity, 0.5);
+            assert_eq!(*all_masks, true);
+            assert_eq!(*mask_index, Some(2));
+        } else {
+            panic!("Expected Stroke effect");
+        }
+    }
+
+    #[test]
+    fn test_mask_mode_none() {
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+
+        let mask_prop = data::MaskProperties {
+            inv: false,
+            mode: Some("n".to_string()), // None
+            pt: data::Property::default(),
+            o: data::Property::default(),
+            nm: None,
+            x: data::Property::default(),
+        };
+
+        let masks = builder.process_masks(&[mask_prop], 0.0);
+
+        assert_eq!(masks.len(), 1);
+        match masks[0].mode {
+            renderer::MaskMode::None => {}, // Pass
+            _ => panic!("Expected MaskMode::None"),
         }
     }
