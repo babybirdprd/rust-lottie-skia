@@ -20,7 +20,7 @@ impl RenderTree {
         rect_path.close_path();
 
         let rect_shape = Shape {
-            geometry: rect_path,
+            geometry: ShapeGeometry::Path(rect_path),
             fill: Some(Fill {
                 paint: Paint::Solid(Vec4::new(1.0, 0.0, 0.0, 1.0)), // Red
                 opacity: 1.0,
@@ -79,10 +79,28 @@ pub enum NodeContent {
 
 #[derive(Clone, Debug)]
 pub struct Shape {
-    pub geometry: BezPath,
+    pub geometry: ShapeGeometry,
     pub fill: Option<Fill>,
     pub stroke: Option<Stroke>,
     pub trim: Option<Trim>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ShapeGeometry {
+    Path(BezPath),
+    Boolean {
+        mode: MergeMode,
+        shapes: Vec<ShapeGeometry>,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum MergeMode {
+    Merge,
+    Add,
+    Subtract,
+    Intersect,
+    Exclude,
 }
 
 #[derive(Clone, Copy, Debug)]

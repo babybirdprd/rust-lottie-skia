@@ -27,12 +27,33 @@ enum GeometryKind {
     Rect { size: Vec2, pos: Vec2, radius: f32 },
     Polystar(PolystarParams),
     Ellipse { size: Vec2, pos: Vec2 },
+    Merge(Vec<PendingGeometry>, MergeMode),
 }
 
 impl PendingGeometry {
+    fn to_shape_geometry(&self, builder: &SceneGraphBuilder) -> ShapeGeometry {
+        match &self.kind {
+            GeometryKind::Merge(geoms, mode) => {
+                let shapes = geoms.iter().map(|g| g.to_shape_geometry(builder)).collect();
+                ShapeGeometry::Boolean {
+                    mode: *mode,
+                    shapes,
+                }
+            }
+            _ => ShapeGeometry::Path(self.to_path(builder)),
+        }
+    }
+
     fn to_path(&self, builder: &SceneGraphBuilder) -> BezPath {
         let mut path = match &self.kind {
             GeometryKind::Path(p) => p.clone(),
+            GeometryKind::Merge(geoms, _) => {
+                let mut p = BezPath::new();
+                for g in geoms {
+                    p.extend(g.to_path(builder));
+                }
+                p
+            }
             GeometryKind::Rect { size, pos, radius } => {
                 let half = *size / 2.0;
                 let rect = kurbo::Rect::new(
@@ -595,7 +616,7 @@ impl<'a> SceneGraphBuilder<'a> {
             let b = u8::from_str_radix(&c_str[4..6], 16).unwrap_or(0) as f32 / 255.0;
 
             NodeContent::Shape(renderer::Shape {
-                geometry: path,
+                geometry: renderer::ShapeGeometry::Path(path),
                 fill: Some(Fill {
                     paint: Paint::Solid(Vec4::new(r, g, b, 1.0)),
                     opacity: 1.0,
@@ -865,6 +886,25 @@ impl<'a> SceneGraphBuilder<'a> {
 
         for item in shapes {
             match item {
+                data::Shape::MergePaths(mp) => {
+                    // Consume all active geometries into a single merged geometry
+                    if !active_geometries.is_empty() {
+                        let mode = match mp.mm {
+                            1 => MergeMode::Merge,
+                            2 => MergeMode::Add,
+                            3 => MergeMode::Subtract,
+                            4 => MergeMode::Intersect,
+                            5 => MergeMode::Exclude,
+                            _ => MergeMode::Merge,
+                        };
+                        let merged = PendingGeometry {
+                            kind: GeometryKind::Merge(active_geometries.clone(), mode),
+                            transform: Mat3::IDENTITY,
+                        };
+                        active_geometries.clear();
+                        active_geometries.push(merged);
+                    }
+                }
                 data::Shape::Path(p) => {
                     let path = self.convert_path(p, frame);
                     active_geometries.push(PendingGeometry {
@@ -1388,8 +1428,8 @@ impl<'a> SceneGraphBuilder<'a> {
         }
     }
 
-    fn convert_geometry(&self, geom: &PendingGeometry) -> BezPath {
-        geom.to_path(self)
+    fn convert_geometry(&self, geom: &PendingGeometry) -> ShapeGeometry {
+        geom.to_shape_geometry(self)
     }
 
     fn generate_polystar_path(&self, params: &PolystarParams) -> BezPath {
@@ -1782,8 +1822,12 @@ mod tests {
                 // Total 10 points. 1 Move, 9 Lines.
                 // ClosePath adds Close.
                 // Total elements: 11.
-                let count = s.geometry.elements().len();
-                assert_eq!(count, 11);
+                if let renderer::ShapeGeometry::Path(path) = &s.geometry {
+                    let count = path.elements().len();
+                    assert_eq!(count, 11);
+                } else {
+                    panic!("Expected Path Geometry");
+                }
             }
             _ => panic!("Expected Shape"),
         }
@@ -1983,9 +2027,13 @@ mod tests {
                 // If 10 ridges, we expect ~10 points + start/end.
                 // Rect path elements count: Move, Line, Line, Line, Close.
                 // ZigZag path elements count: Move, Line... (many).
-                let count = s.geometry.elements().len();
-                println!("ZigZag element count: {}", count);
-                assert!(count > 5, "ZigZag should add points. Got {}", count);
+                if let renderer::ShapeGeometry::Path(path) = &s.geometry {
+                    let count = path.elements().len();
+                    println!("ZigZag element count: {}", count);
+                    assert!(count > 5, "ZigZag should add points. Got {}", count);
+                } else {
+                    panic!("Expected Path Geometry");
+                }
             }
             _ => panic!("Expected Shape"),
         }
@@ -2062,11 +2110,14 @@ mod tests {
         // This relies on `kurbo` `BezPath` equality which is not derived?
         // Or inspect points.
 
-        let p1 = match path1.elements()[0] {
+        let b1 = if let renderer::ShapeGeometry::Path(p) = path1 { p } else { panic!() };
+        let b2 = if let renderer::ShapeGeometry::Path(p) = path2 { p } else { panic!() };
+
+        let p1 = match b1.elements()[0] {
             PathEl::MoveTo(p) => p,
             _ => Point::ZERO,
         };
-        let p2 = match path2.elements()[0] {
+        let p2 = match b2.elements()[0] {
             PathEl::MoveTo(p) => p,
             _ => Point::ZERO,
         };
@@ -2211,12 +2262,16 @@ mod tests {
                     assert_eq!(l3.len(), 1);
                     let shape_node = &l3[0];
                     if let NodeContent::Shape(s) = &shape_node.content {
-                        if let PathEl::MoveTo(p) = s.geometry.elements()[0] {
-                            // Expect 45,45 (50 - 5)
-                            assert!((p.x - 45.0).abs() < 0.1, "Expected x=45, got {}", p.x);
-                            assert!((p.y - 45.0).abs() < 0.1, "Expected y=45, got {}", p.y);
+                        if let renderer::ShapeGeometry::Path(path) = &s.geometry {
+                            if let PathEl::MoveTo(p) = path.elements()[0] {
+                                // Expect 45,45 (50 - 5)
+                                assert!((p.x - 45.0).abs() < 0.1, "Expected x=45, got {}", p.x);
+                                assert!((p.y - 45.0).abs() < 0.1, "Expected y=45, got {}", p.y);
+                            } else {
+                                panic!("Expected MoveTo");
+                            }
                         } else {
-                            panic!("Expected MoveTo");
+                            panic!("Expected Path Geometry");
                         }
                     } else {
                         panic!("Expected Shape Content");
@@ -2599,5 +2654,84 @@ fn test_text_animator() {
             }
         } else {
             panic!("Expected Group content");
+        }
+    }
+
+    #[test]
+    fn test_merge_paths_logic() {
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+
+        // Rect
+        let rect = data::Shape::Rect(data::RectShape {
+            nm: None,
+            s: data::Property {
+                k: data::Value::Static([100.0, 100.0]),
+                ..Default::default()
+            },
+            p: data::Property::default(),
+            r: data::Property::default(),
+        });
+
+        // Ellipse
+        let ellipse = data::Shape::Ellipse(data::EllipseShape {
+            nm: None,
+            s: data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            },
+            p: data::Property::default(),
+        });
+
+        // Merge Paths (Add)
+        let merge = data::Shape::MergePaths(data::MergePathsShape {
+            nm: None,
+            mm: 2, // Add
+        });
+
+        // Fill
+        let fill = data::Shape::Fill(data::FillShape {
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
+        });
+
+        // Order: Rect, Ellipse, Merge, Fill
+        let shapes = vec![rect, ellipse, merge, fill];
+        let nodes = builder.process_shapes(&shapes, 0.0);
+
+        // Expect: 1 RenderNode (Fill applied to Merged Geometry)
+        assert_eq!(nodes.len(), 1);
+
+        match &nodes[0].content {
+            NodeContent::Shape(s) => {
+                match &s.geometry {
+                    ShapeGeometry::Boolean { mode, shapes } => {
+                        assert!(matches!(mode, MergeMode::Add));
+                        assert_eq!(shapes.len(), 2);
+                        // First shape should be Rect path (converted)
+                        // Second shape should be Ellipse path (converted)
+                        if let ShapeGeometry::Path(p1) = &shapes[0] {
+                           // Verify rect elements count (Rect: Move, Line, Line, Line, Close)
+                           assert!(p1.elements().len() >= 5);
+                        } else {
+                            panic!("Expected Path");
+                        }
+                    },
+                    _ => panic!("Expected Boolean Geometry"),
+                }
+            },
+            _ => panic!("Expected Shape Content"),
         }
     }

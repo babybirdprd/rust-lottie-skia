@@ -3,7 +3,8 @@ use kurbo::{BezPath, PathEl};
 use lottie_core::{
     BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
     GradientKind, Justification, LineCap as CoreLineCap, LineJoin as CoreLineJoin,
-    MaskMode as CoreMaskMode, MatteMode, NodeContent, Paint as CorePaint, RenderNode, RenderTree,
+    MaskMode as CoreMaskMode, MatteMode, MergeMode, NodeContent, Paint as CorePaint, RenderNode,
+    RenderTree, ShapeGeometry,
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
@@ -168,7 +169,7 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
             }
         }
         NodeContent::Shape(shape) => {
-            let mut path = kurbo_to_skia_path(&shape.geometry);
+            let mut path = resolve_geometry(&shape.geometry);
 
             // 4.2 Winding Rules
             if let Some(fill) = &shape.fill {
@@ -767,8 +768,46 @@ fn collect_content_path(content: &NodeContent) -> Path {
             }
             group_path
         }
-        NodeContent::Shape(s) => kurbo_to_skia_path(&s.geometry),
+        NodeContent::Shape(s) => resolve_geometry(&s.geometry),
         _ => Path::new(),
+    }
+}
+
+fn resolve_geometry(geometry: &ShapeGeometry) -> Path {
+    match geometry {
+        ShapeGeometry::Path(p) => kurbo_to_skia_path(p),
+        ShapeGeometry::Boolean { mode, shapes } => {
+            if matches!(mode, MergeMode::Merge) {
+                // Merge (Concatenate)
+                let mut path = Path::new();
+                for shape in shapes {
+                    let sub_path = resolve_geometry(shape);
+                    path.add_path(&sub_path, (0.0, 0.0), None);
+                }
+                path
+            } else {
+                // Boolean Ops
+                let mut path = Path::new();
+                for (i, shape) in shapes.iter().enumerate() {
+                    let sub_path = resolve_geometry(shape);
+                    if i == 0 {
+                        path = sub_path;
+                    } else {
+                        let op = match mode {
+                            MergeMode::Add => PathOp::Union,
+                            MergeMode::Subtract => PathOp::Difference,
+                            MergeMode::Intersect => PathOp::Intersect,
+                            MergeMode::Exclude => PathOp::XOR,
+                            _ => PathOp::Union,
+                        };
+                        if let Some(res) = path.op(&sub_path, op) {
+                            path = res;
+                        }
+                    }
+                }
+                path
+            }
+        }
     }
 }
 
