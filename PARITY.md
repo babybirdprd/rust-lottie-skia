@@ -1,11 +1,16 @@
 # Lottie Parity Checklist
 
-This document tracks the feature parity of `rust-lottie-skia` against the standard Lottie specification (supported by Skia/Skottie).
+This document tracks the feature parity of `rust-lottie-skia` against the standard Lottie specification.
 
-**Overall Completion: ~45%**
+**Legend:**
+- `[x]` Implemented in `rust-lottie-skia`
+- `[ ]` Not implemented
+- `-> engine`: Feature should be handled by `director-engine` (rendering loop, asset management, or audio mixing), or the library should just expose data for the engine to use.
+
+---
 
 ## 1. Shapes & Geometry (85%)
-Basic vector shapes and path construction.
+Basic vector shapes and path construction. **(Library Responsibility)**
 
 - [x] **Rectangle**
 - [x] **Ellipse**
@@ -15,7 +20,7 @@ Basic vector shapes and path construction.
 - [x] **Transform** (Anchor, Position, Scale, Rotation, Opacity, Skew)
 
 ## 2. Fills & Strokes (90%)
-Styling of vector shapes.
+Styling of vector shapes. **(Library Responsibility)**
 
 - [x] **Solid Fill**
 - [x] **Gradient Fill** (Linear & Radial)
@@ -26,10 +31,10 @@ Styling of vector shapes.
 - [x] **Line Join** (Miter, Round, Bevel)
 - [x] **Miter Limit**
 - [x] **Dashed Lines**
-- [ ] **Gradient Interpolation** (Smoothness control / Highlight Angle)
+- [ ] **Gradient Interpolation** (Smoothness control)
 
 ## 3. Shape Modifiers (40%)
-Procedural modifications to shapes.
+Procedural modifications to geometry. **(Library Responsibility)**
 
 - [x] **Trim Paths** (Start, End, Offset)
 - [x] **Repeater** (Copies, Offset, Transform, Opacity)
@@ -46,17 +51,17 @@ Layer types and composition structure.
 
 - [x] **Shape Layer**
 - [x] **Solid Layer**
-- [x] **Image Layer (External Files)**
-- [ ] **Image Layer (Embedded Base64)** (Stubbed in code, implementation missing)
 - [x] **Null Layer**
-- [x] **Pre-Composition** (Nested compositions)
 - [x] **Parenting** (Transform hierarchy)
-- [ ] **Time Remapping** (Property `tm` is currently ignored)
+- [x] **Pre-Composition** (Nested compositions)
+- [x] **Image Layer** (Placement & Transform handled by Lib)
+  - `-> engine`: **Asset Loading**. The Engine's `AssetLoader` should provide the bytes/pixels for external or embedded images.
+- [ ] **Time Remapping** (Property `tm` exists but logic is missing in Lib)
 - [ ] **3D Layer** (Camera, Z-axis)
-- [ ] **Adjustment Layer**
+- [ ] **Adjustment Layer** (Applies effects to layers below)
 
 ## 5. Masks & Mattes (80%)
-Visibility and compositing.
+Visibility and compositing. **(Library Responsibility)**
 
 - [x] **Mask Mode: Add**
 - [x] **Mask Mode: Subtract**
@@ -73,46 +78,28 @@ Visibility and compositing.
 Text rendering and typography.
 
 - [x] **Basic Text Rendering**
-- [x] **Font Support** (System fonts + Fallback)
+- [x] **Font Support**
+  - `-> engine`: **Font System**. The Engine holds the `cosmic-text` / `FontSystem`. The Library should request font glyphs/paths from the Engine.
 - [x] **Fill & Stroke**
-- [x] **Justification** (Left, Center, Right)
+- [x] **Justification**
 - [x] **Line Height**
 - [x] **Tracking**
 - [ ] **Text on Path**
-- [ ] **Text Animators** (Range Selectors, Wiggly, etc.)
-- [ ] **Paragraph Text** (Box text)
+- [ ] **Text Animators** (Range Selectors, Wiggly, etc. - Critical for Lottie text)
+- [ ] **Paragraph Text** (Box text wrapping)
 
 ## 7. Effects (10%)
-Post-processing effects.
+Post-processing defined *inside* the Lottie JSON.
 
 - [x] **Drop Shadow**
 - [x] **Gaussian Blur**
-- [x] **Color Matrix** (Custom)
+- [x] **Color Matrix**
 - [x] **Displacement Map**
-- [ ] **Tint**
-- [ ] **Tritone**
-- [ ] **Fill (Effect)**
-- [ ] **Stroke (Effect)**
-- [ ] **Levels** (Individual Controls)
-- [ ] **Curves**
-- [ ] **Hue/Saturation**
-- [ ] **Invert**
-- [ ] **Brightness & Contrast**
-- [ ] **Mosaic**
-- [ ] **Threshold**
+- [ ] **Tint / Tritone**
+- [ ] **Fill / Stroke (Effect)**
+- [ ] **Curves / Levels**
 - [ ] **Turbulent Displace**
-- [ ] **Wave Warp**
-- [ ] **Mesh Warp**
-- [ ] **Twirl**
-- [ ] **Spherize**
-- [ ] **Bulge**
-- [ ] **Corner Pin**
-- [ ] **CC Radial Fast Blur**
-- [ ] **CC Vector Blur**
-- [ ] **Matte Choker**
-- [ ] **Simple Choker**
-- [ ] **Roughen Edges**
-- [ ] **Venetian Blinds**
+- **Note:** If the user wants to apply effects *programmatically* (via Rhai), that is handled by the **Engine**. The Library only needs to handle effects baked into the JSON file.
 
 ## 8. Animation & Interpolation (50%)
 Keyframes and timing.
@@ -120,17 +107,18 @@ Keyframes and timing.
 - [x] **Linear Interpolation**
 - [x] **Bezier Interpolation** (Temporal Ease In/Out)
 - [x] **Hold Interpolation**
-- [ ] **Spatial Bezier** (Curved motion paths supported by data model, but renderer uses Linear Lerp)
-- [ ] **Expressions** (JavaScript/Rhai scripting)
+- [ ] **Spatial Bezier** (Curved motion paths - Data model exists, but renderer uses Linear Lerp)
+- [ ] **Expressions** (JavaScript/Rhai)
+  - `-> engine`: **Scripting**. The Engine already has `Rhai`. Ideally, Lottie expressions could be bridged to the Engine's scripting context, though Lottie uses JS syntax.
 
 ## 9. Audio (0%)
-Sound playback.
+Sound playback defined in Lottie.
 
 - [ ] **Audio Layers**
-- [ ] **Audio Waveforms**
+  - `-> engine`: **Mixing**. The Library should simply extract the audio reference and timing (start/end). The Engine's `AudioMixer` should handle the actual mixing and playback.
+- [ ] **Audio Waveforms** (Visualizing audio data)
 
 ## 10. Optimization & Misc
-- [x] **Layer Compositing** (Skia `saveLayer` for Mattes/Effects)
-- [ ] **Render Caching** (Bitmap caching of static sub-trees)
-- [ ] **Marker Support**
-- [ ] **Metadata**
+- [ ] **Render Caching**
+  - `-> engine`: **Bitmap Caching**. The Engine controls the surface. It should decide if a Lottie node is static and cache it to an Image/Surface to avoid re-running the Lottie renderer every frame.
+- [ ] **Marker Support** (Expose markers for Engine events)
