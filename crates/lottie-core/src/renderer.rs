@@ -46,6 +46,7 @@ impl RenderTree {
             masks: vec![],
             matte: None,
             effects: vec![],
+            is_adjustment_layer: false,
         };
 
         RenderTree {
@@ -65,6 +66,7 @@ pub struct RenderNode {
     pub masks: Vec<Mask>,
     pub matte: Option<Box<Matte>>,
     pub effects: Vec<Effect>,
+    pub is_adjustment_layer: bool,
 }
 
 #[derive(Clone, Debug)]

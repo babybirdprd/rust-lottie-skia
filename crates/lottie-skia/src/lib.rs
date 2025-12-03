@@ -59,6 +59,21 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     // Masks
     apply_masks(canvas, &node.masks);
 
+    if node.is_adjustment_layer {
+        if !node.effects.is_empty() {
+            if let Some(filter) = build_filter(&node.effects) {
+                let clip_path = collect_content_path(&node.content);
+                canvas.save();
+                canvas.clip_path(&clip_path, ClipOp::Intersect, true);
+                canvas.save_layer(&SaveLayerRec::default().backdrop(&filter));
+                canvas.restore();
+                canvas.restore();
+            }
+        }
+        canvas.restore();
+        return;
+    }
+
     // Determine opacity
     let node_alpha = sanitize(node.alpha * parent_alpha);
 
@@ -79,46 +94,7 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
 
         // 4.5 Effects
         if has_effects {
-            let mut filter: Option<skia_safe::ImageFilter> = None;
-            for effect in &node.effects {
-                let next_filter = match effect {
-                    Effect::GaussianBlur { sigma } => {
-                        let s = sanitize(*sigma);
-                        image_filters::blur((s, s), TileMode::Decal, filter.clone(), None)
-                    }
-                    Effect::DropShadow {
-                        color,
-                        offset,
-                        blur,
-                    } => {
-                        let c = glam_to_skia_color_legacy(*color);
-                        let dx = sanitize(offset.x);
-                        let dy = sanitize(offset.y);
-                        let b = sanitize(*blur);
-                        image_filters::drop_shadow((dx, dy), (b, b), c, None, filter, None)
-                    }
-                    Effect::ColorMatrix { matrix } => image_filters::color_filter(
-                        color_filters::matrix_row_major(matrix, Clamp::Yes),
-                        filter,
-                        None,
-                    ),
-                    Effect::DisplacementMap {
-                        scale,
-                        x_channel,
-                        y_channel,
-                    } => image_filters::displacement_map(
-                        (
-                            convert_color_channel(*x_channel),
-                            convert_color_channel(*y_channel),
-                        ),
-                        sanitize(*scale),
-                        None,
-                        filter,
-                        None,
-                    ),
-                };
-                filter = next_filter;
-            }
+            let filter = build_filter(&node.effects);
             paint.set_image_filter(filter);
         }
 
@@ -549,4 +525,78 @@ fn convert_color_channel(c: CoreColorChannel) -> ColorChannel {
         CoreColorChannel::B => ColorChannel::B,
         CoreColorChannel::A => ColorChannel::A,
     }
+}
+
+fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
+    let mut filter: Option<skia_safe::ImageFilter> = None;
+    for effect in effects {
+        let next_filter = match effect {
+            Effect::GaussianBlur { sigma } => {
+                let s = sanitize(*sigma);
+                image_filters::blur((s, s), TileMode::Decal, filter.clone(), None)
+            }
+            Effect::DropShadow {
+                color,
+                offset,
+                blur,
+            } => {
+                let c = glam_to_skia_color_legacy(*color);
+                let dx = sanitize(offset.x);
+                let dy = sanitize(offset.y);
+                let b = sanitize(*blur);
+                image_filters::drop_shadow((dx, dy), (b, b), c, None, filter, None)
+            }
+            Effect::ColorMatrix { matrix } => image_filters::color_filter(
+                color_filters::matrix_row_major(matrix, Clamp::Yes),
+                filter,
+                None,
+            ),
+            Effect::DisplacementMap {
+                scale,
+                x_channel,
+                y_channel,
+            } => image_filters::displacement_map(
+                (
+                    convert_color_channel(*x_channel),
+                    convert_color_channel(*y_channel),
+                ),
+                sanitize(*scale),
+                None,
+                filter,
+                None,
+            ),
+        };
+        filter = next_filter;
+    }
+    filter
+}
+
+fn collect_content_path(content: &NodeContent) -> Path {
+    match content {
+        NodeContent::Group(children) => {
+            let mut group_path = Path::new();
+            for child in children {
+                let child_path = collect_node_path(child);
+                if group_path.is_empty() {
+                    group_path = child_path;
+                } else {
+                    if let Some(res) = group_path.op(&child_path, PathOp::Union) {
+                        group_path = res;
+                    } else {
+                        group_path.add_path(&child_path, (0.0, 0.0), None);
+                    }
+                }
+            }
+            group_path
+        }
+        NodeContent::Shape(s) => kurbo_to_skia_path(&s.geometry),
+        _ => Path::new(),
+    }
+}
+
+fn collect_node_path(node: &RenderNode) -> Path {
+    let mut path = collect_content_path(&node.content);
+    let matrix = glam_to_skia_matrix(node.transform);
+    path.transform(&matrix);
+    path
 }

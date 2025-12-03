@@ -152,6 +152,7 @@ impl LottiePlayer {
                     masks: vec![],
                     matte: None,
                     effects: vec![],
+                    is_adjustment_layer: false,
                 },
             }
         }
@@ -260,10 +261,13 @@ impl<'a> SceneGraphBuilder<'a> {
             masks: vec![],
             matte: None,
             effects: vec![],
+            is_adjustment_layer: false,
         }
     }
 
     fn process_layer(&mut self, layer: &'a data::Layer, layer_map: &HashMap<u32, &'a data::Layer>) -> Option<RenderNode> {
+        let is_adjustment_layer = layer.ao == Some(1);
+
         // Visibility check (in/out points)
         // Note: frame is global time. Layer.st is start time offset.
         // Layer exists from ip to op.
@@ -287,7 +291,7 @@ impl<'a> SceneGraphBuilder<'a> {
         // Content
         let content = if let Some(shapes) = &layer.shapes {
             // Shape Layer
-            let shape_nodes = self.process_shapes(shapes);
+            let shape_nodes = self.process_shapes(shapes, self.frame - layer.st);
             NodeContent::Group(shape_nodes)
         } else if let Some(text_data) = &layer.t {
             // Text Layer
@@ -326,15 +330,16 @@ impl<'a> SceneGraphBuilder<'a> {
             if let Some(asset) = self.assets.get(ref_id) {
                 if let Some(layers) = &asset.layers {
                     // Precomp
-                    // Need to offset time?
-                    // Precomp time = (parent_time - start_time) * stretch...
-                    // Ignoring stretch (`sr`) for now.
-                    let _local_frame = self.frame - layer.st;
+                    let local_frame = if let Some(tm_prop) = &layer.tm {
+                        let tm_sec = Animator::resolve(tm_prop, self.frame, |v| *v, 0.0);
+                        tm_sec * self.model.fr
+                    } else {
+                        self.frame - layer.st
+                    };
 
                     // We need to recursively build the composition.
-                    // But we need a new Builder context if assets are different? Assets are usually global.
-                    // Recursion:
-                    let root = self.build_composition(layers);
+                    let mut sub_builder = SceneGraphBuilder::new(self.model, local_frame, self.external_assets);
+                    let root = sub_builder.build_composition(layers);
                     // The root returned is a Group. We can unwrap it or wrap it.
                     // BUT, precomp layers transform apply to the group.
                     // We are already calculating transform for this layer.
@@ -436,6 +441,7 @@ impl<'a> SceneGraphBuilder<'a> {
             masks,
             matte: None,
             effects: vec![],
+            is_adjustment_layer,
         })
     }
 
@@ -479,16 +485,16 @@ impl<'a> SceneGraphBuilder<'a> {
         mat_t * mat_r * mat_s * mat_a
     }
 
-    fn process_shapes(&self, shapes: &'a [data::Shape]) -> Vec<RenderNode> {
+    fn process_shapes(&self, shapes: &'a [data::Shape], frame: f32) -> Vec<RenderNode> {
         let mut processed_nodes = Vec::new();
         let mut active_geometries: Vec<PendingGeometry> = Vec::new();
 
         let mut trim: Option<Trim> = None;
         for item in shapes {
             if let data::Shape::Trim(t) = item {
-                let s = Animator::resolve(&t.s, 0.0, |v| *v / 100.0, 0.0);
-                let e = Animator::resolve(&t.e, 0.0, |v| *v / 100.0, 1.0);
-                let o = Animator::resolve(&t.o, 0.0, |v| *v / 360.0, 0.0);
+                let s = Animator::resolve(&t.s, frame, |v| *v / 100.0, 0.0);
+                let e = Animator::resolve(&t.e, frame, |v| *v / 100.0, 1.0);
+                let o = Animator::resolve(&t.o, frame, |v| *v / 360.0, 0.0);
                 trim = Some(Trim {
                     start: s,
                     end: e,
@@ -500,24 +506,24 @@ impl<'a> SceneGraphBuilder<'a> {
         for item in shapes {
             match item {
                 data::Shape::Path(p) => {
-                    let path = self.convert_path(p);
+                    let path = self.convert_path(p, frame);
                     active_geometries.push(PendingGeometry {
                         kind: GeometryKind::Path(path),
                         transform: Mat3::IDENTITY,
                     });
                 }
                 data::Shape::Rect(r) => {
-                    let size = Animator::resolve(&r.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let pos = Animator::resolve(&r.p, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let radius = Animator::resolve(&r.r, 0.0, |v| *v, 0.0);
+                    let size = Animator::resolve(&r.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let pos = Animator::resolve(&r.p, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let radius = Animator::resolve(&r.r, frame, |v| *v, 0.0);
                     active_geometries.push(PendingGeometry {
                         kind: GeometryKind::Rect { size, pos, radius },
                         transform: Mat3::IDENTITY,
                     });
                 }
                 data::Shape::Ellipse(e) => {
-                    let size = Animator::resolve(&e.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let pos = Animator::resolve(&e.p, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let size = Animator::resolve(&e.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let pos = Animator::resolve(&e.p, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     active_geometries.push(PendingGeometry {
                         kind: GeometryKind::Ellipse { size, pos },
                         transform: Mat3::IDENTITY,
@@ -534,10 +540,10 @@ impl<'a> SceneGraphBuilder<'a> {
                             Vec2::new(px, py)
                         }
                     };
-                    let or = Animator::resolve(&sr.or, 0.0, |v| *v, 0.0);
-                    let os = Animator::resolve(&sr.os, 0.0, |v| *v, 0.0);
-                    let r = Animator::resolve(&sr.r, 0.0, |v| *v, 0.0);
-                    let pt = Animator::resolve(&sr.pt, 0.0, |v| *v, 5.0);
+                    let or = Animator::resolve(&sr.or, frame, |v| *v, 0.0);
+                    let os = Animator::resolve(&sr.os, frame, |v| *v, 0.0);
+                    let r = Animator::resolve(&sr.r, frame, |v| *v, 0.0);
+                    let pt = Animator::resolve(&sr.pt, frame, |v| *v, 5.0);
                     let ir = if let Some(prop) = &sr.ir {
                         Animator::resolve(prop, 0.0, |v| *v, 0.0)
                     } else {
@@ -565,7 +571,7 @@ impl<'a> SceneGraphBuilder<'a> {
                     });
                 }
                 data::Shape::RoundCorners(rd) => {
-                    let r = Animator::resolve(&rd.r, 0.0, |v| *v, 0.0);
+                    let r = Animator::resolve(&rd.r, frame, |v| *v, 0.0);
                     if r > 0.0 {
                         for geom in &mut active_geometries {
                             match &mut geom.kind {
@@ -577,9 +583,9 @@ impl<'a> SceneGraphBuilder<'a> {
                     }
                 }
                 data::Shape::ZigZag(zz) => {
-                    let ridges = Animator::resolve(&zz.r, 0.0, |v| *v, 0.0);
-                    let size = Animator::resolve(&zz.s, 0.0, |v| *v, 0.0);
-                    let pt = Animator::resolve(&zz.pt, 0.0, |v| *v, 1.0); // 1 = Corner, 2 = Smooth
+                    let ridges = Animator::resolve(&zz.r, frame, |v| *v, 0.0);
+                    let size = Animator::resolve(&zz.s, frame, |v| *v, 0.0);
+                    let pt = Animator::resolve(&zz.pt, frame, |v| *v, 1.0); // 1 = Corner, 2 = Smooth
 
                     let modifier = ZigZagModifier {
                         ridges,
@@ -590,7 +596,7 @@ impl<'a> SceneGraphBuilder<'a> {
                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::PuckerBloat(pb) => {
-                    let amount = Animator::resolve(&pb.a, 0.0, |v| *v, 0.0);
+                    let amount = Animator::resolve(&pb.a, frame, |v| *v, 0.0);
                     // Center? PuckerBloat usually doesn't have explicit center in struct?
                     // I defined struct with only 'a'.
                     // Usually it operates on the center of the shape.
@@ -611,8 +617,8 @@ impl<'a> SceneGraphBuilder<'a> {
                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::Twist(tw) => {
-                    let angle = Animator::resolve(&tw.a, 0.0, |v| *v, 0.0);
-                    let center = Animator::resolve(&tw.c, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let angle = Animator::resolve(&tw.a, frame, |v| *v, 0.0);
+                    let center = Animator::resolve(&tw.c, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
 
                     let modifier = TwistModifier {
                         angle,
@@ -621,7 +627,7 @@ impl<'a> SceneGraphBuilder<'a> {
                     self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::OffsetPath(op) => {
-                     let amount = Animator::resolve(&op.a, 0.0, |v| *v, 0.0);
+                     let amount = Animator::resolve(&op.a, frame, |v| *v, 0.0);
                      let miter_limit = op.ml.unwrap_or(4.0);
                      let line_join = op.lj;
 
@@ -633,17 +639,17 @@ impl<'a> SceneGraphBuilder<'a> {
                      self.apply_modifier_to_active(&mut active_geometries, &modifier);
                 }
                 data::Shape::WigglePath(wg) => {
-                    let speed = Animator::resolve(&wg.s, 0.0, |v| *v, 0.0);
-                    let size = Animator::resolve(&wg.w, 0.0, |v| *v, 0.0);
-                    let correlation = Animator::resolve(&wg.r, 0.0, |v| *v, 0.0);
-                    let seed_prop = Animator::resolve(&wg.sh, 0.0, |v| *v, 0.0);
+                    let speed = Animator::resolve(&wg.s, frame, |v| *v, 0.0);
+                    let size = Animator::resolve(&wg.w, frame, |v| *v, 0.0);
+                    let correlation = Animator::resolve(&wg.r, frame, |v| *v, 0.0);
+                    let seed_prop = Animator::resolve(&wg.sh, frame, |v| *v, 0.0);
 
                     // Seed from struct or generic?
                     // Use seed_prop as base.
 
                     let modifier = WiggleModifier {
                         seed: seed_prop,
-                        time: self.frame / 60.0, // Frame is usually frames. Convert to seconds?
+                        time: frame / 60.0, // Frame is usually frames. Convert to seconds?
                         // LottiePlayer has frame_rate. SceneGraphBuilder has 'frame'.
                         // Assuming frame is frame number. time = frame / fps.
                         // I don't have fps here easily?
@@ -670,17 +676,17 @@ impl<'a> SceneGraphBuilder<'a> {
                     // speed_per_frame = speed / model.fr
 
                     let mut mod_clone = modifier; // copy
-                    mod_clone.time = self.frame;
+                    mod_clone.time = frame;
                     mod_clone.speed = speed / self.model.fr;
 
                     self.apply_modifier_to_active(&mut active_geometries, &mod_clone);
                 }
                 data::Shape::Repeater(rp) => {
-                    let copies = Animator::resolve(&rp.c, 0.0, |v| *v, 0.0);
-                    let offset = Animator::resolve(&rp.o, 0.0, |v| *v, 0.0);
+                    let copies = Animator::resolve(&rp.c, frame, |v| *v, 0.0);
+                    let offset = Animator::resolve(&rp.o, frame, |v| *v, 0.0);
 
                     let t_anchor =
-                        Animator::resolve(&rp.tr.t.a, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+                        Animator::resolve(&rp.tr.t.a, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
                     let t_pos = match &rp.tr.t.p {
                         data::PositionProperty::Unified(p) => {
                             Animator::resolve(p, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO)
@@ -697,10 +703,10 @@ impl<'a> SceneGraphBuilder<'a> {
                         |v| Vec2::from_slice(v) / 100.0,
                         Vec2::ONE,
                     );
-                    let t_rot = Animator::resolve(&rp.tr.t.r, 0.0, |v| *v, 0.0);
+                    let t_rot = Animator::resolve(&rp.tr.t.r, frame, |v| *v, 0.0);
 
-                    let start_opacity = Animator::resolve(&rp.tr.so, 0.0, |v| *v / 100.0, 1.0);
-                    let end_opacity = Animator::resolve(&rp.tr.eo, 0.0, |v| *v / 100.0, 1.0);
+                    let start_opacity = Animator::resolve(&rp.tr.so, frame, |v| *v / 100.0, 1.0);
+                    let end_opacity = Animator::resolve(&rp.tr.eo, frame, |v| *v / 100.0, 1.0);
 
                     self.apply_repeater(
                         copies,
@@ -716,8 +722,8 @@ impl<'a> SceneGraphBuilder<'a> {
                     );
                 }
                 data::Shape::Fill(f) => {
-                    let color = Animator::resolve(&f.c, 0.0, |v| Vec4::from_slice(v), Vec4::ONE);
-                    let opacity = Animator::resolve(&f.o, 0.0, |v| *v / 100.0, 1.0);
+                    let color = Animator::resolve(&f.c, frame, |v| Vec4::from_slice(v), Vec4::ONE);
+                    let opacity = Animator::resolve(&f.o, frame, |v| *v / 100.0, 1.0);
                     for geom in &active_geometries {
                         let path = self.convert_geometry(geom);
                         processed_nodes.push(RenderNode {
@@ -737,15 +743,16 @@ impl<'a> SceneGraphBuilder<'a> {
                             masks: vec![],
                             matte: None,
                             effects: vec![],
+                            is_adjustment_layer: false,
                         });
                     }
                 }
                 data::Shape::GradientFill(gf) => {
-                    let start = Animator::resolve(&gf.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let end = Animator::resolve(&gf.e, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let opacity = Animator::resolve(&gf.o, 0.0, |v| *v / 100.0, 1.0);
+                    let start = Animator::resolve(&gf.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let end = Animator::resolve(&gf.e, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let opacity = Animator::resolve(&gf.o, frame, |v| *v / 100.0, 1.0);
 
-                    let raw_stops = Animator::resolve(&gf.g.k, 0.0, |v| v.clone(), Vec::new());
+                    let raw_stops = Animator::resolve(&gf.g.k, frame, |v| v.clone(), Vec::new());
                     let stops = parse_gradient_stops(&raw_stops, gf.g.p as usize);
 
                     let kind = if gf.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
@@ -774,16 +781,17 @@ impl<'a> SceneGraphBuilder<'a> {
                             masks: vec![],
                             matte: None,
                             effects: vec![],
+                            is_adjustment_layer: false,
                         });
                     }
                 }
                 data::Shape::GradientStroke(gs) => {
-                    let start = Animator::resolve(&gs.s, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let end = Animator::resolve(&gs.e, 0.0, |v| Vec2::from_slice(v), Vec2::ZERO);
-                    let width = Animator::resolve(&gs.w, 0.0, |v| *v, 1.0);
-                    let opacity = Animator::resolve(&gs.o, 0.0, |v| *v / 100.0, 1.0);
+                    let start = Animator::resolve(&gs.s, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let end = Animator::resolve(&gs.e, frame, |v| Vec2::from_slice(v), Vec2::ZERO);
+                    let width = Animator::resolve(&gs.w, frame, |v| *v, 1.0);
+                    let opacity = Animator::resolve(&gs.o, frame, |v| *v / 100.0, 1.0);
 
-                    let raw_stops = Animator::resolve(&gs.g.k, 0.0, |v| v.clone(), Vec::new());
+                    let raw_stops = Animator::resolve(&gs.g.k, frame, |v| v.clone(), Vec::new());
                     let stops = parse_gradient_stops(&raw_stops, gs.g.p as usize);
 
                     let kind = if gs.t == 1 { GradientKind::Linear } else { GradientKind::Radial };
@@ -794,8 +802,8 @@ impl<'a> SceneGraphBuilder<'a> {
                          let mut offset = 0.0;
                          for prop in &gs.d {
                              match prop.n.as_deref() {
-                                 Some("o") => offset = Animator::resolve(&prop.v, 0.0, |v| *v, 0.0),
-                                 Some("d") | Some("g") => array.push(Animator::resolve(&prop.v, 0.0, |v| *v, 0.0)),
+                                 Some("o") => offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0),
+                                 Some("d") | Some("g") => array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0)),
                                  _ => {}
                              }
                          }
@@ -836,13 +844,14 @@ impl<'a> SceneGraphBuilder<'a> {
                             masks: vec![],
                             matte: None,
                             effects: vec![],
+                            is_adjustment_layer: false,
                         });
                     }
                 }
                 data::Shape::Stroke(s) => {
-                    let color = Animator::resolve(&s.c, 0.0, |v| Vec4::from_slice(v), Vec4::ONE);
-                    let width = Animator::resolve(&s.w, 0.0, |v| *v, 1.0);
-                    let opacity = Animator::resolve(&s.o, 0.0, |v| *v / 100.0, 1.0);
+                    let color = Animator::resolve(&s.c, frame, |v| Vec4::from_slice(v), Vec4::ONE);
+                    let width = Animator::resolve(&s.w, frame, |v| *v, 1.0);
+                    let opacity = Animator::resolve(&s.o, frame, |v| *v / 100.0, 1.0);
 
                     let mut dash = None;
                     if !s.d.is_empty() {
@@ -851,10 +860,10 @@ impl<'a> SceneGraphBuilder<'a> {
                         for prop in &s.d {
                              match prop.n.as_deref() {
                                  Some("o") => {
-                                     offset = Animator::resolve(&prop.v, 0.0, |v| *v, 0.0);
+                                     offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0);
                                  }
                                  Some("d") | Some("g") => {
-                                     array.push(Animator::resolve(&prop.v, 0.0, |v| *v, 0.0));
+                                     array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0));
                                  }
                                  _ => {}
                              }
@@ -891,11 +900,12 @@ impl<'a> SceneGraphBuilder<'a> {
                             masks: vec![],
                             matte: None,
                             effects: vec![],
+                            is_adjustment_layer: false,
                         });
                     }
                 }
                 data::Shape::Group(g) => {
-                    let group_nodes = self.process_shapes(&g.it);
+                    let group_nodes = self.process_shapes(&g.it, frame);
                     processed_nodes.push(RenderNode {
                         transform: Mat3::IDENTITY,
                         alpha: 1.0,
@@ -904,6 +914,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         masks: vec![],
                         matte: None,
                         effects: vec![],
+                            is_adjustment_layer: false,
                     });
                 }
                 _ => {}
@@ -1083,8 +1094,8 @@ impl<'a> SceneGraphBuilder<'a> {
         path
     }
 
-    fn convert_path(&self, p: &data::PathShape) -> BezPath {
-        let path_data = Animator::resolve(&p.ks, 0.0, |v| v.clone(), data::BezierPath::default());
+    fn convert_path(&self, p: &data::PathShape, frame: f32) -> BezPath {
+        let path_data = Animator::resolve(&p.ks, frame, |v| v.clone(), data::BezierPath::default());
         self.convert_bezier_path(&path_data)
     }
 
@@ -1331,7 +1342,7 @@ mod tests {
         });
 
         let shapes = vec![star, fill];
-        let nodes = builder.process_shapes(&shapes);
+        let nodes = builder.process_shapes(&shapes, 0.0);
 
         assert_eq!(nodes.len(), 1);
         match &nodes[0].content {
@@ -1384,7 +1395,7 @@ mod tests {
         });
 
         let shapes = vec![rect, repeater, fill];
-        let nodes = builder.process_shapes(&shapes);
+        let nodes = builder.process_shapes(&shapes, 0.0);
 
         // Expect 3 nodes (3 filled rects)
         assert_eq!(nodes.len(), 3);
@@ -1413,6 +1424,7 @@ mod tests {
             st: 0.0,
             ks: data::Transform::default(),
             ao: None,
+            tm: None,
             masks_properties: None,
             tt: None,
             ref_id: Some("image_0".to_string()),
@@ -1488,7 +1500,7 @@ mod tests {
         });
 
         let shapes = vec![rect, zigzag, fill];
-        let nodes = builder.process_shapes(&shapes);
+        let nodes = builder.process_shapes(&shapes, 0.0);
 
         assert_eq!(nodes.len(), 1);
         match &nodes[0].content {
@@ -1540,8 +1552,8 @@ mod tests {
 
         let shapes = vec![rect, wiggle, fill];
 
-        let nodes1 = builder1.process_shapes(&shapes);
-        let nodes2 = builder2.process_shapes(&shapes);
+        let nodes1 = builder1.process_shapes(&shapes, 0.0);
+        let nodes2 = builder2.process_shapes(&shapes, 10.0);
 
         let path1 = match &nodes1[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
         let path2 = match &nodes2[0].content { NodeContent::Shape(s) => &s.geometry, _ => panic!() };
@@ -1557,5 +1569,101 @@ mod tests {
         // Wiggle might affect MoveTo point if it wiggles vertices.
         // Note: Rect starts at corner.
         assert_ne!(p1, p2, "Wiggle should displace points differently at different times");
+    }
+
+    #[test]
+    fn test_time_remap() {
+        let rect = data::Shape::Rect(data::RectShape {
+            nm: None,
+            s: data::Property { k: data::Value::Static([10.0, 10.0]), ..Default::default() },
+            p: data::Property {
+                k: data::Value::Animated(vec![
+                    data::Keyframe { t: 0.0, s: Some([0.0, 0.0]), e: Some([100.0, 100.0]), i: None, o: None, to: None, ti: None, h: None },
+                    data::Keyframe { t: 60.0, s: Some([100.0, 100.0]), e: None, i: None, o: None, to: None, ti: None, h: None },
+                ]),
+                ..Default::default()
+            },
+            r: data::Property::default(),
+        });
+
+        let fill = data::Shape::Fill(data::FillShape {
+             nm: None, c: data::Property::default(), o: data::Property::default(), r: None
+        });
+
+        let inner_layer = data::Layer {
+            ty: 4,
+            ind: Some(1),
+            parent: None,
+            nm: Some("Inner".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ref_id: None,
+            w: None, h: None, color: None, sw: None, sh: None, shapes: Some(vec![rect, fill]), t: None,
+        };
+
+        let asset = data::Asset {
+            id: "precomp1".to_string(),
+            w: Some(100), h: Some(100), nm: None, layers: Some(vec![inner_layer]), u: None, p: None, e: None,
+        };
+
+        let precomp_layer = data::Layer {
+            ty: 0,
+            ind: Some(1),
+            parent: None,
+            nm: Some("PreComp Instance".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: Some(data::Property {
+                k: data::Value::Static(0.5), // 0.5s = 30 frames
+                ..Default::default()
+            }),
+            masks_properties: None,
+            tt: None,
+            ref_id: Some("precomp1".to_string()),
+            w: Some(100), h: Some(100), color: None, sw: None, sh: None, shapes: None, t: None,
+        };
+
+        let model = LottieJson {
+             v: None, ip: 0.0, op: 60.0, fr: 60.0, w: 100, h: 100,
+             layers: vec![precomp_layer],
+             assets: vec![asset],
+        };
+
+        let mut player = LottiePlayer::new();
+        player.load(model);
+
+        let tree = player.render_tree();
+        let root = tree.root;
+
+        if let NodeContent::Group(l1) = root.content {
+            assert_eq!(l1.len(), 1);
+            let precomp_node = &l1[0];
+            if let NodeContent::Group(l2) = &precomp_node.content {
+                 assert_eq!(l2.len(), 1);
+                 let inner_node = &l2[0];
+                 if let NodeContent::Group(l3) = &inner_node.content {
+                      assert_eq!(l3.len(), 1);
+                      let shape_node = &l3[0];
+                      if let NodeContent::Shape(s) = &shape_node.content {
+                           if let PathEl::MoveTo(p) = s.geometry.elements()[0] {
+                               // Expect 45,45 (50 - 5)
+                               assert!((p.x - 45.0).abs() < 0.1, "Expected x=45, got {}", p.x);
+                               assert!((p.y - 45.0).abs() < 0.1, "Expected y=45, got {}", p.y);
+                           } else {
+                               panic!("Expected MoveTo");
+                           }
+                      } else { panic!("Expected Shape Content"); }
+                 } else { panic!("Expected Group (Shape Layer)"); }
+            } else { panic!("Expected Group (PreComp Content)"); }
+        } else { panic!("Expected Group (Root)"); }
     }
 }
