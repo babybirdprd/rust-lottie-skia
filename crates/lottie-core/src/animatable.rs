@@ -3,6 +3,16 @@ use lottie_data::model::{BezierPath, Property, TextDocument, Value};
 
 pub trait Interpolatable: Sized + Clone {
     fn lerp(&self, other: &Self, t: f32) -> Self;
+
+    fn lerp_spatial(
+        &self,
+        other: &Self,
+        t: f32,
+        _tan_in: Option<&Vec<f32>>,
+        _tan_out: Option<&Vec<f32>>,
+    ) -> Self {
+        self.lerp(other, t)
+    }
 }
 
 impl Interpolatable for TextDocument {
@@ -34,6 +44,52 @@ impl Interpolatable for f32 {
 impl Interpolatable for Vec2 {
     fn lerp(&self, other: &Self, t: f32) -> Self {
         Vec2::lerp(*self, *other, t)
+    }
+
+    fn lerp_spatial(
+        &self,
+        other: &Self,
+        t: f32,
+        tan_in: Option<&Vec<f32>>,
+        tan_out: Option<&Vec<f32>>,
+    ) -> Self {
+        let p0 = *self;
+        let p3 = *other;
+
+        let t_out = if let Some(to) = tan_out {
+            if to.len() >= 2 {
+                Vec2::new(to[0], to[1])
+            } else {
+                Vec2::ZERO
+            }
+        } else {
+            Vec2::ZERO
+        };
+
+        let t_in = if let Some(ti) = tan_in {
+            if ti.len() >= 2 {
+                Vec2::new(ti[0], ti[1])
+            } else {
+                Vec2::ZERO
+            }
+        } else {
+            Vec2::ZERO
+        };
+
+        let p1 = p0 + t_out;
+        let p2 = p3 + t_in;
+
+        let one_minus_t = 1.0 - t;
+        let one_minus_t_sq = one_minus_t * one_minus_t;
+        let one_minus_t_cub = one_minus_t_sq * one_minus_t;
+
+        let t_sq = t * t;
+        let t_cub = t_sq * t;
+
+        p0 * one_minus_t_cub
+            + p1 * 3.0 * one_minus_t_sq * t
+            + p2 * 3.0 * one_minus_t * t_sq
+            + p3 * t_cub
     }
 }
 
@@ -181,7 +237,12 @@ impl Animator {
 
                         local_t = solve_cubic_bezier(p1, p2, local_t);
 
-                        return start_val.lerp(&end_val, local_t);
+                        return start_val.lerp_spatial(
+                            &end_val,
+                            local_t,
+                            kf_end.ti.as_ref(),
+                            kf_start.to.as_ref(),
+                        );
                     }
                 }
 
