@@ -446,6 +446,44 @@ pub struct Asset {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TextData {
     pub d: Property<TextDocument>,
+    #[serde(default)]
+    pub a: Option<Vec<TextAnimatorData>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextAnimatorData {
+    pub s: TextSelectorData,
+    pub a: TextStyleData,
+    #[serde(default)]
+    pub nm: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextSelectorData {
+    #[serde(default)]
+    pub s: Option<Property<f32>>,
+    #[serde(default)]
+    pub e: Option<Property<f32>>,
+    #[serde(default)]
+    pub o: Option<Property<f32>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextStyleData {
+    #[serde(default)]
+    pub p: Option<Property<Vec2>>,
+    #[serde(default)]
+    pub s: Option<Property<Vec2>>,
+    #[serde(default)]
+    pub o: Option<Property<f32>>,
+    #[serde(default)]
+    pub r: Option<Property<f32>>,
+    #[serde(default)]
+    pub t: Option<Property<f32>>,
+    #[serde(default)]
+    pub fc: Option<Property<Vec4>>,
+    #[serde(default)]
+    pub sc: Option<Property<Vec4>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

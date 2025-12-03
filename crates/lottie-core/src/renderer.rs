@@ -94,13 +94,22 @@ pub struct Trim {
 
 #[derive(Clone, Debug)]
 pub struct Text {
-    pub content: String,
-    // Simple font handling: family name
+    pub glyphs: Vec<RenderGlyph>,
     pub font_family: String,
     pub size: f32,
     pub justify: Justification,
     pub tracking: f32,
     pub line_height: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderGlyph {
+    pub character: char,
+    pub pos: Vec2,
+    pub scale: Vec2,
+    pub rotation: f32,
+    pub tracking: f32,
+    pub alpha: f32,
     pub fill: Option<Fill>,
     pub stroke: Option<Stroke>,
 }
