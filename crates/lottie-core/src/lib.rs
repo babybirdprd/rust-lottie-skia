@@ -1556,11 +1556,15 @@ impl<'a> SceneGraphBuilder<'a> {
                 Animator::resolve(&m.pt, frame, |v| v.clone(), data::BezierPath::default());
             let geometry = self.convert_bezier_path(&path_data);
             let opacity = Animator::resolve(&m.o, frame, |v| *v / 100.0, 1.0);
+            let expansion = Animator::resolve(&m.x, frame, |v| *v, 0.0);
+            let inverted = m.inv;
 
             masks.push(Mask {
                 mode,
                 geometry,
                 opacity,
+                expansion,
+                inverted,
             });
         }
         masks
@@ -2490,3 +2494,38 @@ fn test_text_animator() {
         panic!("Expected Group (Root)");
     }
 }
+
+    #[test]
+    fn test_mask_expansion_and_inversion() {
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+
+        let mask_prop = data::MaskProperties {
+            inv: true,
+            mode: Some("a".to_string()),
+            pt: data::Property::default(), // Empty path
+            o: data::Property::default(),  // Opacity 100%
+            nm: None,
+            x: data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            },
+        };
+
+        let masks = builder.process_masks(&[mask_prop], 0.0);
+
+        assert_eq!(masks.len(), 1);
+        let mask = &masks[0];
+        assert_eq!(mask.inverted, true);
+        assert!((mask.expansion - 10.0).abs() < 0.001);
+    }

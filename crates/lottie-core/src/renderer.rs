@@ -179,6 +179,8 @@ pub struct Mask {
     pub mode: MaskMode,
     pub geometry: BezPath,
     pub opacity: f32,
+    pub expansion: f32,
+    pub inverted: bool,
 }
 
 #[derive(Clone, Debug)]

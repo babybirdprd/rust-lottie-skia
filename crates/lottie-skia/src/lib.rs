@@ -9,8 +9,8 @@ use skia_safe::color_filters::Clamp;
 use skia_safe::{
     canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, ClipOp,
     Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
-    PaintStyle, Path, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect, TextBlob,
-    TileMode,
+    PaintStyle, Path, PathBuilder, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect,
+    StrokeRec, TextBlob, TileMode,
 };
 
 pub struct SkiaRenderer;
@@ -367,6 +367,29 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
     }
 }
 
+fn resolve_mask_path(mask: &lottie_core::Mask) -> Path {
+    let mut path = kurbo_to_skia_path(&mask.geometry);
+    if mask.expansion > 0.0 {
+        let mut paint = Paint::default();
+        paint.set_style(PaintStyle::Stroke);
+        paint.set_stroke_width(sanitize(mask.expansion * 2.0));
+        paint.set_stroke_cap(skia_safe::PaintCap::Round);
+        paint.set_stroke_join(skia_safe::PaintJoin::Round);
+        paint.set_stroke_miter(4.0);
+
+        let stroke_rec = StrokeRec::from_paint(&paint, PaintStyle::Stroke, 1.0);
+
+        let mut builder = PathBuilder::new();
+        if stroke_rec.apply_to_path(&mut builder, &path) {
+            let stroke_path = builder.detach(None);
+            if let Some(res) = path.op(&stroke_path, PathOp::Union) {
+                path = res;
+            }
+        }
+    }
+    path
+}
+
 fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
     if masks.is_empty() {
         return;
@@ -378,7 +401,7 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
 
     for mask in masks {
         if let CoreMaskMode::Add = mask.mode {
-            let path = kurbo_to_skia_path(&mask.geometry);
+            let path = resolve_mask_path(mask);
             if !has_add {
                 add_path = path;
                 has_add = true;
@@ -402,11 +425,11 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
         match mask.mode {
             CoreMaskMode::Add => { /* Already handled */ }
             CoreMaskMode::Subtract => {
-                let path = kurbo_to_skia_path(&mask.geometry);
+                let path = resolve_mask_path(mask);
                 canvas.clip_path(&path, ClipOp::Difference, true);
             }
             CoreMaskMode::Intersect => {
-                let path = kurbo_to_skia_path(&mask.geometry);
+                let path = resolve_mask_path(mask);
                 canvas.clip_path(&path, ClipOp::Intersect, true);
             }
             _ => { /* Lighten, Darken, Difference ignored for clip */ }
