@@ -158,7 +158,47 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
         draw_content(canvas, &node.content, node_alpha);
     }
 
+    draw_stroke_effects(canvas, node, node_alpha);
+
     canvas.restore();
+}
+
+fn draw_stroke_effects(canvas: &Canvas, node: &RenderNode, alpha: f32) {
+    for effect in &node.effects {
+        if let Effect::Stroke {
+            color,
+            width,
+            opacity,
+            mask_index,
+            all_masks,
+        } = effect
+        {
+            let mut paint = Paint::default();
+            paint.set_style(PaintStyle::Stroke);
+            paint.set_stroke_width(sanitize(*width));
+            let c = glam_to_skia_color4f(*color);
+            paint.set_color4f(c, None);
+            paint.set_alpha_f(sanitize(*opacity * alpha));
+            paint.set_stroke_cap(skia_safe::PaintCap::Round);
+            paint.set_stroke_join(skia_safe::PaintJoin::Round);
+
+            let mut masks_to_draw = Vec::new();
+            if *all_masks {
+                for m in &node.masks {
+                    masks_to_draw.push(m);
+                }
+            } else if let Some(idx) = mask_index {
+                if *idx > 0 && *idx <= node.masks.len() {
+                    masks_to_draw.push(&node.masks[*idx - 1]);
+                }
+            }
+
+            for mask in masks_to_draw {
+                let path = kurbo_to_skia_path(&mask.geometry);
+                canvas.draw_path(&path, &paint);
+            }
+        }
+    }
 }
 
 fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
@@ -425,6 +465,7 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
     for mask in masks {
         match mask.mode {
             CoreMaskMode::Add => { /* Already handled */ }
+            CoreMaskMode::None => { /* Ignored for clipping */ }
             CoreMaskMode::Subtract => {
                 let path = resolve_mask_path(mask);
                 canvas.clip_path(&path, ClipOp::Difference, true);

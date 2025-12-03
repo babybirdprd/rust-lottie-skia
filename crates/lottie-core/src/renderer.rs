@@ -243,6 +243,8 @@ pub enum Effect {
         color: Vec4,
         width: f32,
         opacity: f32,
+        mask_index: Option<usize>,
+        all_masks: bool,
     },
     Levels {
         in_black: f32,
@@ -312,6 +314,7 @@ pub enum LineJoin {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MaskMode {
+    None,
     Add,
     Subtract,
     Intersect,
