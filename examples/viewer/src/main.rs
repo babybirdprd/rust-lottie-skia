@@ -1,4 +1,4 @@
-use lottie_core::LottiePlayer;
+use lottie_core::{LottiePlayer, TextMeasurer};
 use lottie_data::model::LottieJson;
 use lottie_skia::SkiaRenderer;
 use skia_safe::{AlphaType, ColorType, ImageInfo};
@@ -85,6 +85,25 @@ const SAMPLE_LOTTIE: &str = r#"
 }
 "#;
 
+struct SkiaMeasurer;
+
+impl TextMeasurer for SkiaMeasurer {
+    fn measure(&self, text: &str, font_family: &str, size: f32) -> f32 {
+        let font_mgr = skia_safe::FontMgr::new();
+        let typeface = font_mgr
+            .match_family_style(font_family, skia_safe::FontStyle::normal())
+            .or_else(|| font_mgr.match_family_style("Arial", skia_safe::FontStyle::normal()))
+            .or_else(|| font_mgr.match_family_style("", skia_safe::FontStyle::normal()));
+
+        if let Some(typeface) = typeface {
+            let font = skia_safe::Font::new(typeface, Some(size));
+            font.measure_str(text, None).0
+        } else {
+            0.0
+        }
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
@@ -101,6 +120,7 @@ fn main() {
 
     // Player init
     let mut player = LottiePlayer::new();
+    player.set_text_measurer(Box::new(SkiaMeasurer));
     let args: Vec<String> = std::env::args().collect();
     let lottie: LottieJson = if args.len() > 1 {
         let content = std::fs::read_to_string(&args[1]).expect("Failed to read file");

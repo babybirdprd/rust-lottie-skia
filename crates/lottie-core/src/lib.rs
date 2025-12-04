@@ -111,6 +111,11 @@ pub enum ImageSource {
     Data(Vec<u8>), // Encoded bytes (PNG/JPG)
 }
 
+pub trait TextMeasurer: Send + Sync {
+    /// Returns the width of the text string for the given font and size.
+    fn measure(&self, text: &str, font_family: &str, size: f32) -> f32;
+}
+
 pub struct LottiePlayer {
     pub model: Option<LottieJson>,
     pub current_frame: f32,
@@ -119,6 +124,7 @@ pub struct LottiePlayer {
     pub duration_frames: f32,
     pub frame_rate: f32,
     pub assets: HashMap<String, ImageSource>,
+    pub text_measurer: Option<Box<dyn TextMeasurer>>,
 }
 
 impl LottiePlayer {
@@ -131,7 +137,12 @@ impl LottiePlayer {
             duration_frames: 60.0,
             frame_rate: 60.0,
             assets: HashMap::new(),
+            text_measurer: None,
         }
+    }
+
+    pub fn set_text_measurer(&mut self, measurer: Box<dyn TextMeasurer>) {
+        self.text_measurer = Some(measurer);
     }
 
     pub fn set_asset(&mut self, id: String, data: Vec<u8>) {
@@ -165,7 +176,12 @@ impl LottiePlayer {
 
     pub fn render_tree(&self) -> RenderTree {
         if let Some(model) = &self.model {
-            let mut builder = SceneGraphBuilder::new(model, self.current_frame, &self.assets);
+            let mut builder = SceneGraphBuilder::new(
+                model,
+                self.current_frame,
+                &self.assets,
+                self.text_measurer.as_deref(),
+            );
             builder.build()
         } else {
             // Return empty tree
@@ -192,6 +208,7 @@ struct SceneGraphBuilder<'a> {
     frame: f32,
     assets: HashMap<String, &'a data::Asset>,
     external_assets: &'a HashMap<String, ImageSource>,
+    text_measurer: Option<&'a dyn TextMeasurer>,
 }
 
 impl<'a> SceneGraphBuilder<'a> {
@@ -199,6 +216,7 @@ impl<'a> SceneGraphBuilder<'a> {
         model: &'a LottieJson,
         frame: f32,
         external_assets: &'a HashMap<String, ImageSource>,
+        text_measurer: Option<&'a dyn TextMeasurer>,
     ) -> Self {
         let mut assets = HashMap::new();
         for asset in &model.assets {
@@ -209,6 +227,7 @@ impl<'a> SceneGraphBuilder<'a> {
             frame,
             assets,
             external_assets,
+            text_measurer,
         }
     }
 
@@ -516,6 +535,220 @@ impl<'a> SceneGraphBuilder<'a> {
                 }
             }
 
+            // Layout & Wrapping
+            if let Some(measurer) = self.text_measurer {
+                let box_size = doc.sz.map(|v| Vec2::from_slice(&v));
+                let box_pos = doc.ps.map(|v| Vec2::from_slice(&v)).unwrap_or(Vec2::ZERO);
+                let tracking_val = doc.tr; // Usually in 1/1000s of em or px? Lottie Skia treats as px additive.
+
+                if let Some(sz) = box_size {
+                    // --- Box Text ---
+                    let box_width = sz.x;
+                    let mut lines: Vec<Vec<usize>> = Vec::new(); // Indices of glyphs
+                    let mut current_line: Vec<usize> = Vec::new();
+                    let mut current_line_width = 0.0;
+
+                    // Simple word tokenizer
+                    // We iterate glyphs. We group them into words.
+                    // A "word" is a sequence of non-space characters followed by spaces.
+
+                    let mut i = 0;
+                    while i < glyphs.len() {
+                        // Find word start
+                        let start = i;
+                        // Find next space or end
+                        let mut end = i;
+                        let mut word_width = 0.0;
+
+                        while end < glyphs.len() {
+                            let g = &glyphs[end];
+                            // Measure glyph
+                            let char_str = g.character.to_string();
+                            let w = measurer.measure(&char_str, &doc.f, doc.s);
+                            let advance = w + tracking_val + g.tracking;
+
+                            word_width += advance;
+
+                            let is_space = g.character == ' ';
+                            let is_newline = g.character == '\n';
+
+                            end += 1;
+
+                            if is_space || is_newline {
+                                break;
+                            }
+                        }
+
+                        // Check if word fits
+                        // If current_line is empty, we must add it (even if overflow)
+                        // If current_line not empty, and current + word > box, wrap.
+
+                        // Note: word includes the trailing space.
+                        // If wrapping, we might drop the space? Lottie usually wraps at space.
+                        // The space should stay on the line it belongs to, or disappear?
+                        // Usually trailing space at EOL is invisible/ignored for width but conceptually there.
+
+                        let is_newline = if end > 0 { glyphs[end-1].character == '\n' } else { false };
+
+                        if is_newline {
+                             // Force break
+                             // Add word to current line
+                             for k in start..end {
+                                 current_line.push(k);
+                             }
+                             lines.push(current_line);
+                             current_line = Vec::new();
+                             current_line_width = 0.0;
+                        } else {
+                            if !current_line.is_empty() && current_line_width + word_width > box_width {
+                                // Wrap
+                                lines.push(current_line);
+                                current_line = Vec::new();
+                                current_line_width = 0.0;
+                            }
+
+                            // Add word
+                            for k in start..end {
+                                current_line.push(k);
+                            }
+                            current_line_width += word_width;
+                        }
+
+                        i = end;
+                    }
+                    if !current_line.is_empty() {
+                        lines.push(current_line);
+                    }
+
+                    // Vertical Alignment (Top)
+                    let mut current_y = box_pos.y;
+                    // Note: If drawing from baseline, we might need to add ascent?
+                    // User said: "current_y = ps.y".
+                    // But also "The `ps` property defines the center or top-left".
+                    // Let's assume text starts at ps.y.
+
+                    for line_indices in lines {
+                         // Measure line width (excluding trailing spaces for justification?)
+                         let mut line_width = 0.0;
+                         // Also calculate advances for positioning
+                         let mut advances = Vec::new();
+
+                         // Determine visible width (trim trailing whitespace for alignment)
+                         // But we need to calculate positions for all.
+
+                         for &idx in &line_indices {
+                             let g = &glyphs[idx];
+                             let w = measurer.measure(&g.character.to_string(), &doc.f, doc.s);
+                             let advance = w + tracking_val + g.tracking;
+                             advances.push(advance);
+                             line_width += advance;
+                         }
+
+                         // Calculate Start X based on Justification
+                         // Justify relative to Box Width
+                         let align_width = line_width; // Or trim trailing space?
+                         // For simplicity, use full line width calculated.
+
+                         let start_x = match doc.j {
+                             1 => box_width - align_width, // Right (relative to box)
+                             2 => (box_width - align_width) / 2.0, // Center
+                             _ => 0.0, // Left
+                         };
+
+                         let mut x = box_pos.x + start_x;
+                         for (k, &idx) in line_indices.iter().enumerate() {
+                             let g = &mut glyphs[idx];
+                             // Apply calculated position (plus any animator position delta)
+                             // g.pos already has animator delta. We need to ADD the layout position.
+                             // Wait, g.pos currently stores the animator delta (p_delta).
+                             // We should add the layout pos to it.
+                             g.pos += Vec2::new(x, current_y);
+
+                             x += advances[k];
+                         }
+
+                         current_y += doc.lh;
+                    }
+
+                } else {
+                    // --- Point Text (with Measurer) ---
+                    // Handle newlines, but no wrapping width
+                    let mut current_y = 0.0;
+
+                    // For Justification in Point Text, we need to know line width first.
+                    // Split into lines by '\n'
+                    let mut lines: Vec<Vec<usize>> = Vec::new();
+                    let mut current_line = Vec::new();
+
+                    for (i, g) in glyphs.iter().enumerate() {
+                        if g.character == '\n' {
+                            lines.push(current_line);
+                            current_line = Vec::new();
+                        } else {
+                            current_line.push(i);
+                        }
+                    }
+                    lines.push(current_line);
+
+                    for line_indices in lines {
+                        let mut line_width = 0.0;
+                        let mut advances = Vec::new();
+                        for &idx in &line_indices {
+                             let g = &glyphs[idx];
+                             let w = measurer.measure(&g.character.to_string(), &doc.f, doc.s);
+                             let advance = w + tracking_val + g.tracking;
+                             advances.push(advance);
+                             line_width += advance;
+                        }
+
+                        // Point Text Justification (Anchor point is usually origin)
+                        // Left: start at 0.
+                        // Center: start at -width/2.
+                        // Right: start at -width.
+
+                        let start_x = match doc.j {
+                            1 => -line_width,
+                            2 => -line_width / 2.0,
+                            _ => 0.0,
+                        };
+
+                        let mut x = start_x;
+                        for (k, &idx) in line_indices.iter().enumerate() {
+                             let g = &mut glyphs[idx];
+                             g.pos += Vec2::new(x, current_y);
+                             x += advances[k];
+                        }
+                        current_y += doc.lh;
+                    }
+                }
+            } else {
+                 // --- Fallback (No Measurer) ---
+                 // If we have no measurer, we can't calculate layout.
+                 // RenderGlyphs will have positions relative to (0,0) (animator deltas only).
+                 // The Renderer will have to deal with it, OR we emit warnings?
+                 // Since the task requirement is to implement wrapping in Core,
+                 // and we added the Trait, we assume the host provides it.
+                 // For now, leave as is (positions are just animator deltas).
+                 // Point text will likely render all on top of each other in the new renderer
+                 // if we remove layout logic there.
+                 // But typically, simple examples might not set the measurer.
+                 // I should probably implement a naive fallback (fixed width)?
+                 // Let's assume 10px width per char as fallback to prevent 0-overlap pileup.
+
+                 let fixed_width = 10.0;
+                 let mut x = 0.0;
+                 let mut y = 0.0;
+                 for g in &mut glyphs {
+                     if g.character == '\n' {
+                         x = 0.0;
+                         y += doc.lh;
+                     } else {
+                         g.pos += Vec2::new(x, y);
+                         x += fixed_width + doc.tr + g.tracking;
+                     }
+                 }
+            }
+
             NodeContent::Text(Text {
                 glyphs,
                 font_family: doc.f,
@@ -541,8 +774,12 @@ impl<'a> SceneGraphBuilder<'a> {
                     };
 
                     // We need to recursively build the composition.
-                    let mut sub_builder =
-                        SceneGraphBuilder::new(self.model, local_frame, self.external_assets);
+                    let mut sub_builder = SceneGraphBuilder::new(
+                        self.model,
+                        local_frame,
+                        self.external_assets,
+                        self.text_measurer,
+                    );
                     let root = sub_builder.build_composition(layers);
                     // The root returned is a Group. We can unwrap it or wrap it.
                     // BUT, precomp layers transform apply to the group.
@@ -1882,7 +2119,7 @@ mod tests {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         let star = data::Shape::Polystar(data::PolystarShape {
             nm: None,
@@ -1953,7 +2190,7 @@ mod tests {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
@@ -2082,7 +2319,7 @@ mod tests {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         // Rect
         let rect = data::Shape::Rect(data::RectShape {
@@ -2161,8 +2398,8 @@ mod tests {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder1 = SceneGraphBuilder::new(&model, 0.0, &assets);
-        let builder2 = SceneGraphBuilder::new(&model, 10.0, &assets); // different time
+        let builder1 = SceneGraphBuilder::new(&model, 0.0, &assets, None);
+        let builder2 = SceneGraphBuilder::new(&model, 10.0, &assets, None); // different time
 
         let rect = data::Shape::Rect(data::RectShape {
             nm: None,
@@ -2496,7 +2733,7 @@ mod tests {
         };
 
         let external = HashMap::new();
-        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external, None);
         let tree = builder.build();
 
         let root = tree.root;
@@ -2668,7 +2905,7 @@ fn test_text_animator() {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         let mask_prop = data::MaskProperties {
             inv: true,
@@ -2744,7 +2981,7 @@ fn test_text_animator() {
         };
 
         let external = HashMap::new();
-        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external, None);
         let tree = builder.build();
 
         let root = tree.root;
@@ -2777,7 +3014,7 @@ fn test_text_animator() {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         // Rect
         let rect = data::Shape::Rect(data::RectShape {
@@ -2956,7 +3193,7 @@ fn test_text_animator() {
         };
 
         let external = HashMap::new();
-        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external);
+        let mut builder = SceneGraphBuilder::new(&model, 0.0, &external, None);
         let tree = builder.build();
 
         let root = tree.root;
@@ -2997,7 +3234,7 @@ fn test_text_animator() {
             assets: vec![],
         };
         let assets = HashMap::new();
-        let builder = SceneGraphBuilder::new(&model, 0.0, &assets);
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
 
         let mask_prop = data::MaskProperties {
             inv: false,
@@ -3016,3 +3253,108 @@ fn test_text_animator() {
             _ => panic!("Expected MaskMode::None"),
         }
     }
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+    use lottie_data::model as data;
+
+    struct MockMeasurer;
+    impl TextMeasurer for MockMeasurer {
+        fn measure(&self, text: &str, _font: &str, _size: f32) -> f32 {
+            // Assume 10px width per char
+            text.len() as f32 * 10.0
+        }
+    }
+
+    #[test]
+    fn test_box_text_wrapping() {
+        let text_doc = data::TextDocument {
+            t: "Hello World".to_string(),
+            f: "Arial".to_string(),
+            s: 10.0,
+            sz: Some([60.0, 100.0]), // Width 60. "Hello" (50) fits. " " (10). "World" (50).
+                                     // "Hello " (60) fits exactly?
+                                     // "Hello" = 50. " " = 10. "World" = 50.
+                                     // "Hello " = 60. Fits.
+                                     // "Hello World" = 110. > 60. Wrap.
+                                     // Expect:
+                                     // Line 1: "Hello " (or "Hello")
+                                     // Line 2: "World"
+            ps: Some([10.0, 10.0]),
+            lh: 20.0,
+            ..Default::default()
+        };
+
+        let text_data = data::TextData {
+            d: data::Property {
+                k: data::Value::Static(text_doc),
+                ..Default::default()
+            },
+            a: None,
+        };
+
+        let layer = data::Layer {
+            ty: 5,
+            ind: Some(1),
+            parent: None,
+            nm: Some("Box Text".to_string()),
+            ip: 0.0,
+            op: 60.0,
+            st: 0.0,
+            ks: data::Transform::default(),
+            ao: None,
+            tm: None,
+            masks_properties: None,
+            tt: None,
+            ef: None, sy: None,
+            ref_id: None,
+            w: None,
+            h: None,
+            color: None,
+            sw: None,
+            sh: None,
+            shapes: None,
+            t: Some(text_data),
+        };
+
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![layer],
+            assets: vec![],
+        };
+
+        let mut player = LottiePlayer::new();
+        player.load(model);
+        player.set_text_measurer(Box::new(MockMeasurer));
+
+        let tree = player.render_tree();
+
+        if let NodeContent::Group(l1) = tree.root.content {
+            let text_node = &l1[0];
+            if let NodeContent::Text(text) = &text_node.content {
+                // "Hello " is 6 chars. "World" is 5 chars. Total 11 glyphs.
+                // Depending on whether we trim or keep spaces. My logic keeps them.
+                assert_eq!(text.glyphs.len(), 11);
+
+                // Check positions
+                // Line 1: Hello_ (y=10.0)
+                // Line 2: World (y=30.0) (10 + 20 lh)
+
+                let g_h = &text.glyphs[0]; // 'H'
+                let g_w = &text.glyphs[6]; // 'W' (index 6)
+
+                assert!((g_h.pos.y - 10.0).abs() < 0.1, "H should be at y=10, got {}", g_h.pos.y);
+                assert!((g_w.pos.y - 30.0).abs() < 0.1, "W should be at y=30, got {}", g_w.pos.y);
+
+            } else {
+                panic!("Expected Text");
+            }
+        }
+    }
+}

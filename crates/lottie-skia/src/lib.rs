@@ -2,9 +2,9 @@ use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, PathEl};
 use lottie_core::{
     BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
-    GradientKind, Justification, LayerStyle as CoreLayerStyle, LineCap as CoreLineCap,
-    LineJoin as CoreLineJoin, MaskMode as CoreMaskMode, MatteMode, MergeMode, NodeContent,
-    Paint as CorePaint, RenderNode, RenderTree, ShapeGeometry,
+    GradientKind, LayerStyle as CoreLayerStyle, LineCap as CoreLineCap, LineJoin as CoreLineJoin,
+    MaskMode as CoreMaskMode, MatteMode, MergeMode, NodeContent, Paint as CorePaint, RenderNode,
+    RenderTree, ShapeGeometry,
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
@@ -280,72 +280,43 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
 
             if let Some(typeface) = typeface {
                 let font = Font::new(typeface, Some(text.size));
-                let mut lines = Vec::new();
-                let mut current_line = Vec::new();
-                for g in &text.glyphs {
-                    if g.character == '\n' {
-                        lines.push(current_line);
-                        current_line = Vec::new();
-                    } else {
-                        current_line.push(g);
-                    }
-                }
-                lines.push(current_line);
 
-                let mut current_y = 0.0;
-                for line in lines {
-                    let mut line_width = 0.0;
-                    for glyph in &line {
-                        let width = font.measure_str(&glyph.character.to_string(), None).0;
-                        line_width += width + text.tracking + glyph.tracking;
+                for glyph in &text.glyphs {
+                    let char_str = glyph.character.to_string();
+                    if char_str == "\n" {
+                        continue;
                     }
 
-                    let start_x = match text.justify {
-                        Justification::Left => 0.0,
-                        Justification::Center => -line_width / 2.0,
-                        Justification::Right => -line_width,
-                    };
+                    canvas.save();
+                    // Positions are now pre-calculated in lottie-core (including wrapping and justification)
+                    let draw_pos = Point::new(sanitize(glyph.pos.x), sanitize(glyph.pos.y));
+                    canvas.translate(draw_pos);
 
-                    let mut current_x = start_x;
-                    for glyph in line {
-                        let char_str = glyph.character.to_string();
-                        let (base_advance, _) = font.measure_str(&char_str, None);
-
-                        canvas.save();
-                        let draw_pos = Point::new(
-                            sanitize(current_x + glyph.pos.x),
-                            sanitize(current_y + glyph.pos.y),
-                        );
-                        canvas.translate(draw_pos);
-
-                        if glyph.rotation != 0.0 {
-                            canvas.rotate(glyph.rotation, None);
-                        }
-                        if glyph.scale != Vec2::ONE {
-                            canvas.scale((sanitize(glyph.scale.x), sanitize(glyph.scale.y)));
-                        }
-
-                        if let Some(blob) = TextBlob::from_str(&char_str, &font) {
-                            if let Some(fill) = &glyph.fill {
-                                let mut paint = Paint::default();
-                                paint.set_style(PaintStyle::Fill);
-                                paint.set_alpha_f(sanitize(fill.opacity * glyph.alpha * alpha));
-                                setup_paint_shader(&mut paint, &fill.paint);
-                                canvas.draw_text_blob(&blob, (0.0, 0.0), &paint);
-                            }
-                            if let Some(stroke) = &glyph.stroke {
-                                let mut paint = Paint::default();
-                                paint.set_style(PaintStyle::Stroke);
-                                paint.set_alpha_f(sanitize(stroke.opacity * glyph.alpha * alpha));
-                                paint.set_stroke_width(sanitize(stroke.width));
-                                setup_paint_shader(&mut paint, &stroke.paint);
-                                canvas.draw_text_blob(&blob, (0.0, 0.0), &paint);
-                            }
-                        }
-                        canvas.restore();
-                        current_x += base_advance + text.tracking + glyph.tracking;
+                    if glyph.rotation != 0.0 {
+                        canvas.rotate(glyph.rotation, None);
                     }
-                    current_y += text.line_height;
+                    if glyph.scale != Vec2::ONE {
+                        canvas.scale((sanitize(glyph.scale.x), sanitize(glyph.scale.y)));
+                    }
+
+                    if let Some(blob) = TextBlob::from_str(&char_str, &font) {
+                        if let Some(fill) = &glyph.fill {
+                            let mut paint = Paint::default();
+                            paint.set_style(PaintStyle::Fill);
+                            paint.set_alpha_f(sanitize(fill.opacity * glyph.alpha * alpha));
+                            setup_paint_shader(&mut paint, &fill.paint);
+                            canvas.draw_text_blob(&blob, (0.0, 0.0), &paint);
+                        }
+                        if let Some(stroke) = &glyph.stroke {
+                            let mut paint = Paint::default();
+                            paint.set_style(PaintStyle::Stroke);
+                            paint.set_alpha_f(sanitize(stroke.opacity * glyph.alpha * alpha));
+                            paint.set_stroke_width(sanitize(stroke.width));
+                            setup_paint_shader(&mut paint, &stroke.paint);
+                            canvas.draw_text_blob(&blob, (0.0, 0.0), &paint);
+                        }
+                    }
+                    canvas.restore();
                 }
             }
         }
