@@ -1,4 +1,4 @@
-use serde::{de::SeqAccess, Deserialize, Deserializer, Serialize};
+use serde::{de::SeqAccess, de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -110,8 +110,40 @@ pub struct EffectValue {
     pub nm: Option<String>,
     #[serde(default)]
     pub ix: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_effect_value_property")]
     pub v: Option<Property<serde_json::Value>>,
+}
+
+fn deserialize_effect_value_property<'de, D>(
+    deserializer: D,
+) -> Result<Option<Property<serde_json::Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut v = serde_json::Value::deserialize(deserializer)?;
+    if v.is_null() {
+        return Ok(None);
+    }
+
+    // Unwrap single-element array
+    if let serde_json::Value::Array(arr) = &v {
+        if arr.len() == 1 {
+            v = arr[0].clone();
+        }
+    }
+
+    if v.is_object() && v.get("k").is_some() {
+        if let Ok(p) = serde_json::from_value::<Property<serde_json::Value>>(v.clone()) {
+            return Ok(Some(p));
+        }
+    }
+
+    // Fallback: Treat as static value
+    Ok(Some(Property {
+        k: Value::Static(v),
+        a: 0,
+        ix: None,
+    }))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -446,6 +478,7 @@ pub struct Property<T> {
     #[serde(default)]
     pub a: u8,
     #[serde(default)]
+    #[serde(bound(deserialize = "T: DeserializeOwned"))]
     pub k: Value<T>,
     #[serde(default)]
     pub ix: Option<u32>,
@@ -461,12 +494,40 @@ impl<T> Default for Property<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
+#[derive(Debug, Serialize, Clone)]
 pub enum Value<T> {
     Default,
     Static(T),
     Animated(Vec<Keyframe<T>>),
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Value<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = serde_json::Value::deserialize(deserializer)?;
+
+        if v.is_null() {
+            return Ok(Value::Default);
+        }
+
+        if let Ok(keyframes) = serde_json::from_value::<Vec<Keyframe<T>>>(v.clone()) {
+            return Ok(Value::Animated(keyframes));
+        }
+
+        if let Ok(val) = serde_json::from_value::<T>(v.clone()) {
+            return Ok(Value::Static(val));
+        }
+
+        if let Ok(vec) = serde_json::from_value::<Vec<T>>(v) {
+            if let Some(first) = vec.into_iter().next() {
+                return Ok(Value::Static(first));
+            }
+        }
+
+        Ok(Value::Default)
+    }
 }
 
 impl<T> Default for Value<T> {
@@ -476,15 +537,41 @@ impl<T> Default for Value<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(bound(deserialize = "T: DeserializeOwned"))]
 pub struct Keyframe<T> {
     pub t: f32,
+    #[serde(default, deserialize_with = "deserialize_keyframe_value")]
     pub s: Option<T>,
+    #[serde(default, deserialize_with = "deserialize_keyframe_value")]
     pub e: Option<T>,
     pub i: Option<Vec2>,
     pub o: Option<Vec2>,
     pub to: Option<Vec<f32>>,
     pub ti: Option<Vec<f32>>,
     pub h: Option<u8>,
+}
+
+fn deserialize_keyframe_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    if v.is_null() {
+        return Ok(None);
+    }
+
+    if let Ok(val) = serde_json::from_value(v.clone()) {
+        return Ok(Some(val));
+    }
+
+    if let Ok(vec) = serde_json::from_value::<Vec<T>>(v) {
+        if let Some(first) = vec.into_iter().next() {
+            return Ok(Some(first));
+        }
+    }
+
+    Ok(None)
 }
 
 pub type Vec2 = [f32; 2];
