@@ -2036,6 +2036,17 @@ struct AlphaStop {
     a: f32,
 }
 
+/// Parses gradient stops from the raw array.
+///
+/// The raw array contains flattened color stops followed by alpha stops.
+/// - Color stops: [offset, r, g, b] (4 floats)
+/// - Alpha stops: [offset, alpha] (2 floats)
+///
+/// This function handles cases where color and alpha stops are misaligned by generating
+/// a "superset" of stops. It collects all unique offsets from both color and alpha stops,
+/// and at each unique offset, it interpolates both the color and alpha values.
+/// This ensures correct rendering even if "Smoothness" (non-linear interpolation)
+/// introduces extra stops in one channel but not the other.
 fn parse_gradient_stops(raw: &[f32], color_count: usize) -> Vec<GradientStop> {
     let mut stops = Vec::new();
     if raw.is_empty() {
