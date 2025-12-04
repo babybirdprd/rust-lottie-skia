@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec4};
+use glam::{Vec2, Vec3, Vec4};
 use lottie_data::model::{BezierPath, Property, TextDocument, Value};
 
 pub trait Interpolatable: Sized + Clone {
@@ -74,6 +74,62 @@ impl Interpolatable for Vec2 {
             }
         } else {
             Vec2::ZERO
+        };
+
+        let p1 = p0 + t_out;
+        let p2 = p3 + t_in;
+
+        let one_minus_t = 1.0 - t;
+        let one_minus_t_sq = one_minus_t * one_minus_t;
+        let one_minus_t_cub = one_minus_t_sq * one_minus_t;
+
+        let t_sq = t * t;
+        let t_cub = t_sq * t;
+
+        p0 * one_minus_t_cub
+            + p1 * 3.0 * one_minus_t_sq * t
+            + p2 * 3.0 * one_minus_t * t_sq
+            + p3 * t_cub
+    }
+}
+
+impl Interpolatable for Vec3 {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Vec3::lerp(*self, *other, t)
+    }
+
+    fn lerp_spatial(
+        &self,
+        other: &Self,
+        t: f32,
+        tan_in: Option<&Vec<f32>>,
+        tan_out: Option<&Vec<f32>>,
+    ) -> Self {
+        let p0 = *self;
+        let p3 = *other;
+
+        let t_out = if let Some(to) = tan_out {
+            if to.len() >= 3 {
+                Vec3::new(to[0], to[1], to[2])
+            } else if to.len() >= 2 {
+                Vec3::new(to[0], to[1], 0.0)
+            } else {
+                Vec3::ZERO
+            }
+        } else {
+            Vec3::ZERO
+        };
+
+        let t_in = if let Some(ti) = tan_in {
+            if ti.len() >= 3 {
+                Vec3::new(ti[0], ti[1], ti[2])
+            } else if ti.len() >= 2 {
+                Vec3::new(ti[0], ti[1], 0.0)
+            } else {
+                Vec3::ZERO
+            }
+        } else {
+            Vec3::ZERO
         };
 
         let p1 = p0 + t_out;

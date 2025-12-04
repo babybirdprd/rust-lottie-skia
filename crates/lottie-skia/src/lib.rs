@@ -1,4 +1,4 @@
-use glam::{Mat3, Vec2, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use kurbo::{BezPath, PathEl};
 use lottie_core::{
     BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
@@ -9,7 +9,7 @@ use lottie_core::{
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
     canvas::SaveLayerRec, color_filters, gradient_shader, image_filters, BlendMode, Canvas, ClipOp,
-    Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
+    Color, Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, M44, Paint,
     PaintStyle, Path, PathBuilder, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect,
     StrokeRec, TextBlob, TileMode,
 };
@@ -32,6 +32,12 @@ impl SkiaRenderer {
 
         canvas.concat(&global_matrix);
 
+        // Apply Camera Matrix (3D)
+        let camera_matrix = tree.projection_matrix * tree.view_matrix;
+        let m44 = glam_to_skia_m44(camera_matrix);
+        // Try concat_44
+        canvas.concat_44(&m44);
+
         // Draw Root Node
         draw_node(canvas, &tree.root, alpha);
 
@@ -43,8 +49,8 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     canvas.save();
 
     // Transform
-    let matrix = glam_to_skia_matrix(node.transform);
-    canvas.concat(&matrix);
+    let m44 = glam_to_skia_m44(node.transform);
+    canvas.concat_44(&m44);
 
     // Masks
     apply_masks(canvas, &node.masks);
@@ -288,16 +294,15 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     }
 
                     canvas.save();
-                    // Positions are now pre-calculated in lottie-core (including wrapping and justification)
-                    let draw_pos = Point::new(sanitize(glyph.pos.x), sanitize(glyph.pos.y));
-                    canvas.translate(draw_pos);
 
-                    if glyph.rotation != 0.0 {
-                        canvas.rotate(glyph.rotation, None);
-                    }
-                    if glyph.scale != Vec2::ONE {
-                        canvas.scale((sanitize(glyph.scale.x), sanitize(glyph.scale.y)));
-                    }
+                    // 3D Transform for Glyph
+                    let t = Mat4::from_translation(glyph.pos);
+                    let r = Mat4::from_euler(glam::EulerRot::YXZ, glyph.rotation.y, glyph.rotation.x, glyph.rotation.z);
+                    let s = Mat4::from_scale(glyph.scale);
+                    let m = t * r * s;
+
+                    let m44 = glam_to_skia_m44(m);
+                    canvas.concat_44(&m44);
 
                     if let Some(blob) = TextBlob::from_str(&char_str, &font) {
                         if let Some(fill) = &glyph.fill {
@@ -346,6 +351,65 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     Rect::from_wh(image.width as f32, image.height as f32),
                     &paint,
                 );
+            }
+        }
+    }
+}
+
+fn collect_content_path(content: &NodeContent) -> Path {
+    match content {
+        NodeContent::Group(children) => {
+            let mut group_path = Path::new();
+            for child in children {
+                let child_path = collect_node_path(child);
+                if group_path.is_empty() {
+                    group_path = child_path;
+                } else {
+                    if let Some(res) = group_path.op(&child_path, PathOp::Union) {
+                        group_path = res;
+                    } else {
+                        group_path.add_path(&child_path, (0.0, 0.0), None);
+                    }
+                }
+            }
+            group_path
+        }
+        NodeContent::Shape(s) => resolve_geometry(&s.geometry),
+        _ => Path::new(),
+    }
+}
+
+fn resolve_geometry(geometry: &ShapeGeometry) -> Path {
+    match geometry {
+        ShapeGeometry::Path(p) => kurbo_to_skia_path(p),
+        ShapeGeometry::Boolean { mode, shapes } => {
+            if matches!(mode, MergeMode::Merge) {
+                let mut path = Path::new();
+                for shape in shapes {
+                    let sub_path = resolve_geometry(shape);
+                    path.add_path(&sub_path, (0.0, 0.0), None);
+                }
+                path
+            } else {
+                let mut path = Path::new();
+                for (i, shape) in shapes.iter().enumerate() {
+                    let sub_path = resolve_geometry(shape);
+                    if i == 0 {
+                        path = sub_path;
+                    } else {
+                        let op = match mode {
+                            MergeMode::Add => PathOp::Union,
+                            MergeMode::Subtract => PathOp::Difference,
+                            MergeMode::Intersect => PathOp::Intersect,
+                            MergeMode::Exclude => PathOp::XOR,
+                            _ => PathOp::Union,
+                        };
+                        if let Some(res) = path.op(&sub_path, op) {
+                            path = res;
+                        }
+                    }
+                }
+                path
             }
         }
     }
@@ -467,18 +531,30 @@ fn sanitize(v: f32) -> f32 {
     }
 }
 
-fn glam_to_skia_matrix(m: Mat3) -> Matrix {
-    if !m.is_finite() {
-        return Matrix::translate((0.0, 0.0));
-    }
+fn glam_to_skia_m44(m: Mat4) -> M44 {
     let c0 = m.col(0);
     let c1 = m.col(1);
     let c2 = m.col(2);
+    let c3 = m.col(3);
+
+    // M44::new is Row-Major arguments
+    M44::new(
+        sanitize(c0.x), sanitize(c1.x), sanitize(c2.x), sanitize(c3.x),
+        sanitize(c0.y), sanitize(c1.y), sanitize(c2.y), sanitize(c3.y),
+        sanitize(c0.z), sanitize(c1.z), sanitize(c2.z), sanitize(c3.z),
+        sanitize(c0.w), sanitize(c1.w), sanitize(c2.w), sanitize(c3.w),
+    )
+}
+
+fn glam_mat4_to_skia_matrix_2d(m: Mat4) -> Matrix {
+    let c0 = m.col(0);
+    let c1 = m.col(1);
+    let c3 = m.col(3);
 
     Matrix::new_all(
-        c0.x, c1.x, c2.x,
-        c0.y, c1.y, c2.y,
-        c0.z, c1.z, c2.z,
+        sanitize(c0.x), sanitize(c1.x), sanitize(c3.x),
+        sanitize(c0.y), sanitize(c1.y), sanitize(c3.y),
+        0.0, 0.0, 1.0
     )
 }
 
@@ -726,73 +802,9 @@ fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
     filter
 }
 
-// ... existing collect_content_path, resolve_geometry, collect_node_path ...
-// I need to include them.
-
-fn collect_content_path(content: &NodeContent) -> Path {
-    match content {
-        NodeContent::Group(children) => {
-            let mut group_path = Path::new();
-            for child in children {
-                let child_path = collect_node_path(child);
-                if group_path.is_empty() {
-                    group_path = child_path;
-                } else {
-                    if let Some(res) = group_path.op(&child_path, PathOp::Union) {
-                        group_path = res;
-                    } else {
-                        group_path.add_path(&child_path, (0.0, 0.0), None);
-                    }
-                }
-            }
-            group_path
-        }
-        NodeContent::Shape(s) => resolve_geometry(&s.geometry),
-        _ => Path::new(),
-    }
-}
-
-fn resolve_geometry(geometry: &ShapeGeometry) -> Path {
-    match geometry {
-        ShapeGeometry::Path(p) => kurbo_to_skia_path(p),
-        ShapeGeometry::Boolean { mode, shapes } => {
-            if matches!(mode, MergeMode::Merge) {
-                // Merge (Concatenate)
-                let mut path = Path::new();
-                for shape in shapes {
-                    let sub_path = resolve_geometry(shape);
-                    path.add_path(&sub_path, (0.0, 0.0), None);
-                }
-                path
-            } else {
-                // Boolean Ops
-                let mut path = Path::new();
-                for (i, shape) in shapes.iter().enumerate() {
-                    let sub_path = resolve_geometry(shape);
-                    if i == 0 {
-                        path = sub_path;
-                    } else {
-                        let op = match mode {
-                            MergeMode::Add => PathOp::Union,
-                            MergeMode::Subtract => PathOp::Difference,
-                            MergeMode::Intersect => PathOp::Intersect,
-                            MergeMode::Exclude => PathOp::XOR,
-                            _ => PathOp::Union,
-                        };
-                        if let Some(res) = path.op(&sub_path, op) {
-                            path = res;
-                        }
-                    }
-                }
-                path
-            }
-        }
-    }
-}
-
 fn collect_node_path(node: &RenderNode) -> Path {
     let mut path = collect_content_path(&node.content);
-    let matrix = glam_to_skia_matrix(node.transform);
+    let matrix = glam_mat4_to_skia_matrix_2d(node.transform);
     path.transform(&matrix);
     path
 }

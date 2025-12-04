@@ -1,4 +1,4 @@
-use glam::{Mat3, Vec2, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use kurbo::BezPath;
 
 #[derive(Clone, Debug)]
@@ -6,6 +6,8 @@ pub struct RenderTree {
     pub width: f32,
     pub height: f32,
     pub root: RenderNode,
+    pub view_matrix: Mat4,
+    pub projection_matrix: Mat4,
 }
 
 impl RenderTree {
@@ -39,7 +41,7 @@ impl RenderTree {
         };
 
         let root = RenderNode {
-            transform: Mat3::IDENTITY,
+            transform: Mat4::IDENTITY,
             alpha: 1.0,
             blend_mode: BlendMode::Normal,
             content: NodeContent::Shape(rect_shape),
@@ -54,13 +56,15 @@ impl RenderTree {
             width: 500.0,
             height: 500.0,
             root,
+            view_matrix: Mat4::IDENTITY,
+            projection_matrix: Mat4::IDENTITY,
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct RenderNode {
-    pub transform: Mat3,
+    pub transform: Mat4,
     pub alpha: f32,
     pub blend_mode: BlendMode,
     pub content: NodeContent,
@@ -125,9 +129,9 @@ pub struct Text {
 #[derive(Clone, Debug)]
 pub struct RenderGlyph {
     pub character: char,
-    pub pos: Vec2,
-    pub scale: Vec2,
-    pub rotation: f32,
+    pub pos: Vec3,
+    pub scale: Vec3,
+    pub rotation: Vec3, // Euler angles (radians)
     pub tracking: f32,
     pub alpha: f32,
     pub fill: Option<Fill>,
