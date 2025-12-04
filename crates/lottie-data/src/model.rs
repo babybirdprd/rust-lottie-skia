@@ -573,4 +573,8 @@ pub struct TextDocument {
     pub sw: Option<f32>,
     #[serde(default)]
     pub of: Option<bool>,
+    #[serde(default)]
+    pub sz: Option<Vec2>, // Size [w, h] for Box Text
+    #[serde(default)]
+    pub ps: Option<Vec2>, // Position [x, y] for Box Text
 }
