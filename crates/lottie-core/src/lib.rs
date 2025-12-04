@@ -2036,6 +2036,17 @@ struct AlphaStop {
     a: f32,
 }
 
+/// Parses gradient stops from the raw array.
+///
+/// The raw array contains flattened color stops followed by alpha stops.
+/// - Color stops: [offset, r, g, b] (4 floats)
+/// - Alpha stops: [offset, alpha] (2 floats)
+///
+/// This function handles cases where color and alpha stops are misaligned by generating
+/// a "superset" of stops. It collects all unique offsets from both color and alpha stops,
+/// and at each unique offset, it interpolates both the color and alpha values.
+/// This ensures correct rendering even if "Smoothness" (non-linear interpolation)
+/// introduces extra stops in one channel but not the other.
 fn parse_gradient_stops(raw: &[f32], color_count: usize) -> Vec<GradientStop> {
     let mut stops = Vec::new();
     if raw.is_empty() {
@@ -3573,5 +3584,76 @@ mod text_tests {
                 panic!("Expected Text");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+    use glam::Vec4;
+
+    #[test]
+    fn test_gradient_stops_parsing() {
+        // Case 1: Simple Linear Gradient (Red to Blue)
+        // Raw: [0.0, 1.0, 0.0, 0.0,  1.0, 0.0, 0.0, 1.0] (2 colors)
+        let raw1 = vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+        let stops1 = parse_gradient_stops(&raw1, 2);
+        assert_eq!(stops1.len(), 2);
+        assert_eq!(stops1[0].offset, 0.0);
+        assert_eq!(stops1[0].color, Vec4::new(1.0, 0.0, 0.0, 1.0));
+        assert_eq!(stops1[1].offset, 1.0);
+        assert_eq!(stops1[1].color, Vec4::new(0.0, 0.0, 1.0, 1.0));
+
+        // Case 2: Misaligned Alpha Stops (Superset Generation)
+        // Color: 0.0 Red, 1.0 Blue
+        // Alpha: 0.5 Alpha 0.5 (Single point, should extend?)
+        // Standard Lottie usually provides pairs. Let's assume a single pair [0.5, 0.5] acts as a point.
+        let raw2 = vec![
+            0.0, 1.0, 0.0, 0.0, // Red at 0
+            1.0, 0.0, 0.0, 1.0, // Blue at 1
+            0.5, 0.5            // Alpha 0.5 at 0.5
+        ];
+        let stops2 = parse_gradient_stops(&raw2, 2);
+        // unique_t: 0.0, 0.5, 1.0.
+        // t=0.0: Color=Red, Alpha=0.5 (extended)
+        // t=0.5: Color=Mid(Purple), Alpha=0.5
+        // t=1.0: Color=Blue, Alpha=0.5
+        assert_eq!(stops2.len(), 3);
+        assert_eq!(stops2[0].offset, 0.0);
+        assert_eq!(stops2[1].offset, 0.5);
+        assert_eq!(stops2[2].offset, 1.0);
+
+        assert_eq!(stops2[0].color.w, 0.5);
+        assert_eq!(stops2[1].color.w, 0.5);
+        assert_eq!(stops2[2].color.w, 0.5);
+
+        // Case 3: Complex Misalignment
+        // Color: 0.0 Red, 1.0 Blue
+        // Alpha: 0.2 Opaque (1.0), 0.8 Transparent (0.0)
+        let raw3 = vec![
+            0.0, 1.0, 0.0, 0.0,
+            1.0, 0.0, 0.0, 1.0,
+            0.2, 1.0,
+            0.8, 0.0
+        ];
+        let stops3 = parse_gradient_stops(&raw3, 2);
+        // unique_t: 0.0, 0.2, 0.8, 1.0
+        assert_eq!(stops3.len(), 4);
+
+        // Check t=0.2
+        let s_02 = &stops3[1];
+        assert_eq!(s_02.offset, 0.2);
+        assert_eq!(s_02.color.w, 1.0); // Alpha should be 1.0
+        // Color should be mix 20%
+        assert!((s_02.color.x - 0.8).abs() < 0.01); // Red goes 1->0. At 0.2 it is 0.8.
+        assert!((s_02.color.z - 0.2).abs() < 0.01); // Blue goes 0->1. At 0.2 it is 0.2.
+
+         // Check t=0.8
+        let s_08 = &stops3[2];
+        assert_eq!(s_08.offset, 0.8);
+        assert_eq!(s_08.color.w, 0.0); // Alpha should be 0.0
+        // Color should be mix 80%
+        assert!((s_08.color.x - 0.2).abs() < 0.01);
+        assert!((s_08.color.z - 0.8).abs() < 0.01);
     }
 }
