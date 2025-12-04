@@ -46,6 +46,7 @@ impl RenderTree {
             masks: vec![],
             matte: None,
             effects: vec![],
+            styles: vec![],
             is_adjustment_layer: false,
         };
 
@@ -66,6 +67,7 @@ pub struct RenderNode {
     pub masks: Vec<Mask>,
     pub matte: Option<Box<Matte>>,
     pub effects: Vec<Effect>,
+    pub styles: Vec<LayerStyle>,
     pub is_adjustment_layer: bool,
 }
 
@@ -252,6 +254,37 @@ pub enum Effect {
         gamma: f32,
         out_black: f32,
         out_white: f32,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum LayerStyle {
+    DropShadow {
+        color: Vec4,
+        opacity: f32,
+        angle: f32,
+        distance: f32,
+        size: f32,
+        spread: f32,
+    },
+    InnerShadow {
+        color: Vec4,
+        opacity: f32,
+        angle: f32,
+        distance: f32,
+        size: f32,
+        choke: f32,
+    },
+    OuterGlow {
+        color: Vec4,
+        opacity: f32,
+        size: f32,
+        range: f32,
+    },
+    Stroke {
+        color: Vec4,
+        width: f32,
+        opacity: f32,
     },
 }
 
