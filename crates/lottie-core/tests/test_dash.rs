@@ -3,7 +3,7 @@ use lottie_data::model as data;
 
 // Helper to create a basic layer with a stroke
 fn create_stroke_layer(stroke: data::Shape) -> data::Layer {
-    // Need a Rect to give context for stroke application (though for parsing it might not strictly matter if we inspect logic, but for rendering tree it does)
+    // Need a Rect to give context for stroke application
     let rect = data::Shape::Rect(data::RectShape {
         nm: None,
         s: data::Property {
@@ -25,6 +25,8 @@ fn create_stroke_layer(stroke: data::Shape) -> data::Layer {
         ks: data::Transform::default(),
         ao: None,
         tm: None,
+        ddd: None,
+        pe: None,
         masks_properties: None,
         tt: None,
         ef: None,
@@ -175,9 +177,7 @@ fn test_offset_normalization_positive_huge() {
     let dash = extract_stroke_dash(layer).expect("Dash should be present");
 
     // Total length = 20.
-    // 2025 % 20.
-    // 2025 / 20 = 101 rem 5.
-    // 2000 is div by 20. 25 -> 5.
+    // 2025 % 20 = 5.
     assert!((dash.offset - 5.0).abs() < 0.001, "Expected offset 5.0, got {}", dash.offset);
 }
 
@@ -217,7 +217,7 @@ fn test_offset_normalization_negative() {
 
     // Total length = 20.
     // -5 % 20 -> -5.
-    // (-5 % 20 + 20) % 20 -> (-5 + 20) % 20 = 15.
+    // (-5 % 20 + 20) % 20 -> 15.
     assert!((dash.offset - 15.0).abs() < 0.001, "Expected offset 15.0, got {}", dash.offset);
 }
 
@@ -241,7 +241,7 @@ fn test_gradient_stroke_dash() {
     let o1 = data::DashProperty {
         n: Some("o".to_string()),
         v: data::Property {
-            k: data::Value::Static(35.0), // 35 % 30 = 5
+            k: data::Value::Static(35.0),
             ..Default::default()
         },
     };

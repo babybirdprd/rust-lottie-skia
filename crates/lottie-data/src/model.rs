@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::SeqAccess, Deserialize, Deserializer, Serialize};
+use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LottieJson {
@@ -36,6 +37,10 @@ pub struct Layer {
     pub ao: Option<u32>,
     #[serde(default)]
     pub tm: Option<Property<f32>>,
+    #[serde(default)]
+    pub ddd: Option<u8>, // 3D Layer Flag (0=2D, 1=3D)
+    #[serde(default)]
+    pub pe: Option<Property<f32>>, // Perspective
 
     #[serde(default, rename = "masksProperties")]
     pub masks_properties: Option<Vec<MaskProperties>>,
@@ -174,7 +179,6 @@ pub enum Shape {
     WigglePath(WigglePathShape),
     #[serde(rename = "mm")]
     MergePaths(MergePathsShape),
-    // Use other for unsupported shapes to prevent failure?
     #[serde(other)]
     Unknown,
 }
@@ -184,55 +188,55 @@ pub struct MergePathsShape {
     #[serde(default)]
     pub nm: Option<String>,
     #[serde(default)]
-    pub mm: u8, // Mode: 1=Merge, 2=Add, 3=Subtract, 4=Intersect, 5=Exclude
+    pub mm: u8,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ZigZagShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub r: Property<f32>, // Ridges
-    pub s: Property<f32>, // Size
+    pub r: Property<f32>,
+    pub s: Property<f32>,
     #[serde(default)]
-    pub pt: Property<f32>, // Point Type: 1=Corner, 2=Smooth
+    pub pt: Property<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PuckerBloatShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub a: Property<f32>, // Amount
+    pub a: Property<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TwistShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub a: Property<f32>,  // Angle
-    pub c: Property<Vec2>, // Center
+    pub a: Property<f32>,
+    pub c: Property<Vec2>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OffsetPathShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub a: Property<f32>, // Amount
+    pub a: Property<f32>,
     #[serde(default)]
-    pub lj: u8, // Line Join
+    pub lj: u8,
     #[serde(default)]
-    pub ml: Option<f32>, // Miter Limit
+    pub ml: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WigglePathShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub s: Property<f32>, // Speed (wiggles/sec)
-    pub w: Property<f32>, // Size
+    pub s: Property<f32>,
+    pub w: Property<f32>,
     #[serde(default)]
-    pub r: Property<f32>, // Correlation
+    pub r: Property<f32>,
     #[serde(default)]
-    pub sh: Property<f32>, // Seed/Phase
+    pub sh: Property<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -246,7 +250,7 @@ pub struct PolystarShape {
     pub r: Property<f32>,
     pub pt: Property<f32>,
     #[serde(default)]
-    pub sy: u8, // 1=star, 2=polygon
+    pub sy: u8,
     #[serde(default)]
     pub ir: Option<Property<f32>>,
     #[serde(default)]
@@ -257,10 +261,10 @@ pub struct PolystarShape {
 pub struct RepeaterShape {
     #[serde(default)]
     pub nm: Option<String>,
-    pub c: Property<f32>, // Copies
-    pub o: Property<f32>, // Offset
+    pub c: Property<f32>,
+    pub o: Property<f32>,
     #[serde(default)]
-    pub m: u8, // Composite
+    pub m: u8,
     pub tr: RepeaterTransform,
 }
 
@@ -269,9 +273,9 @@ pub struct RepeaterTransform {
     #[serde(flatten)]
     pub t: Transform,
     #[serde(default)]
-    pub so: Property<f32>, // Start Opacity
+    pub so: Property<f32>,
     #[serde(default)]
-    pub eo: Property<f32>, // End Opacity
+    pub eo: Property<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -402,22 +406,33 @@ pub struct TransformShape {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Transform {
     #[serde(default)]
-    pub a: Property<Vec2>,
+    pub a: Property<Vec3DefaultZero>, // Anchor: Vec3, default z=0
     #[serde(default)]
-    pub p: PositionProperty,
+    pub p: PositionProperty,          // Position: Vec3, default z=0
     #[serde(default)]
-    pub s: Property<Vec2>,
+    pub s: Property<Vec3Scale>,       // Scale: Vec3, default z=100
+    #[serde(default, alias = "r")]
+    pub rz: Property<f32>,            // Rotation Z
     #[serde(default)]
-    pub r: Property<f32>,
+    pub rx: Option<Property<f32>>,    // Rotation X
     #[serde(default)]
-    pub o: Property<f32>,
+    pub ry: Option<Property<f32>>,    // Rotation Y
+    #[serde(default)]
+    pub or: Option<Property<Vec3DefaultZero>>, // Orientation
+    #[serde(default)]
+    pub o: Property<f32>,             // Opacity
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum PositionProperty {
-    Unified(Property<Vec2>),
-    Split { x: Property<f32>, y: Property<f32> },
+    Unified(Property<Vec3DefaultZero>),
+    Split {
+        x: Property<f32>,
+        y: Property<f32>,
+        #[serde(default)]
+        z: Option<Property<f32>>,
+    },
 }
 
 impl Default for PositionProperty {
@@ -473,7 +488,81 @@ pub struct Keyframe<T> {
 }
 
 pub type Vec2 = [f32; 2];
+pub type Vec3 = [f32; 3];
 pub type Vec4 = [f32; 4];
+
+// Wrapper for Vec3 with Z defaulting to 0.0
+#[derive(Debug, Clone, Serialize)]
+pub struct Vec3DefaultZero(pub Vec3);
+
+impl Default for Vec3DefaultZero {
+    fn default() -> Self {
+        Vec3DefaultZero([0.0, 0.0, 0.0])
+    }
+}
+
+impl<'de> Deserialize<'de> for Vec3DefaultZero {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Vec3Visitor;
+        impl<'de> serde::de::Visitor<'de> for Vec3Visitor {
+            type Value = Vec3DefaultZero;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a sequence of 2 or 3 floats")
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let x = seq.next_element()?.unwrap_or(0.0);
+                let y = seq.next_element()?.unwrap_or(0.0);
+                let z = seq.next_element()?.unwrap_or(0.0);
+                // Consume remaining if any (shouldn't be)
+                while let Some(_) = seq.next_element::<f32>()? {}
+                Ok(Vec3DefaultZero([x, y, z]))
+            }
+        }
+        deserializer.deserialize_seq(Vec3Visitor)
+    }
+}
+
+// Wrapper for Vec3 with Z defaulting to 100.0 (for Scale)
+#[derive(Debug, Clone, Serialize)]
+pub struct Vec3Scale(pub Vec3);
+
+impl Default for Vec3Scale {
+    fn default() -> Self {
+        Vec3Scale([100.0, 100.0, 100.0])
+    }
+}
+
+impl<'de> Deserialize<'de> for Vec3Scale {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Vec3ScaleVisitor;
+        impl<'de> serde::de::Visitor<'de> for Vec3ScaleVisitor {
+            type Value = Vec3Scale;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a sequence of 2 or 3 floats")
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let x = seq.next_element()?.unwrap_or(0.0);
+                let y = seq.next_element()?.unwrap_or(0.0);
+                let z = seq.next_element()?.unwrap_or(100.0); // Default to 100%
+                while let Some(_) = seq.next_element::<f32>()? {}
+                Ok(Vec3Scale([x, y, z]))
+            }
+        }
+        deserializer.deserialize_seq(Vec3ScaleVisitor)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct BezierPath {
@@ -534,9 +623,9 @@ pub struct TextSelectorData {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TextStyleData {
     #[serde(default)]
-    pub p: Option<Property<Vec2>>,
+    pub p: Option<Property<Vec3DefaultZero>>, // Updated to Vec3
     #[serde(default)]
-    pub s: Option<Property<Vec2>>,
+    pub s: Option<Property<Vec3Scale>>,       // Updated to Vec3Scale
     #[serde(default)]
     pub o: Option<Property<f32>>,
     #[serde(default)]
