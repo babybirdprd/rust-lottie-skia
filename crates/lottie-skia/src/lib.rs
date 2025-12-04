@@ -2,9 +2,9 @@ use glam::{Mat3, Vec2, Vec4};
 use kurbo::{BezPath, PathEl};
 use lottie_core::{
     BlendMode as CoreBlendMode, ColorChannel as CoreColorChannel, Effect, FillRule as CoreFillRule,
-    GradientKind, Justification, LineCap as CoreLineCap, LineJoin as CoreLineJoin,
-    MaskMode as CoreMaskMode, MatteMode, MergeMode, NodeContent, Paint as CorePaint, RenderNode,
-    RenderTree, ShapeGeometry,
+    GradientKind, Justification, LayerStyle as CoreLayerStyle, LineCap as CoreLineCap,
+    LineJoin as CoreLineJoin, MaskMode as CoreMaskMode, MatteMode, MergeMode, NodeContent,
+    Paint as CorePaint, RenderNode, RenderTree, ShapeGeometry,
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
@@ -18,24 +18,12 @@ pub struct SkiaRenderer;
 
 impl SkiaRenderer {
     /// Draws the computed frame onto the provided canvas.
-    ///
-    /// # Arguments
-    /// * `canvas` - The active Skia canvas.
-    /// * `tree` - The computed state of the animation for the current frame.
-    /// * `dest_rect` - The bounds to draw into (handles scaling).
-    /// * `alpha` - Global opacity multiplier (0.0 to 1.0).
-    ///
-    /// Note: `canvas` is immutable reference because `skia-safe` uses interior mutability
-    /// for its `Canvas` wrapper, but conceptually it is mutated.
     pub fn draw(canvas: &Canvas, tree: &RenderTree, dest_rect: Rect, alpha: f32) {
         canvas.save();
 
         // 4.1 Coordinate System & Transforms
-        // Global Transform: Map the Lottie composition dimensions (w x h) to the target dest_rect.
         let scale_x = sanitize(dest_rect.width() / tree.width);
         let scale_y = sanitize(dest_rect.height() / tree.height);
-
-        // Sanitize rect
         let left = sanitize(dest_rect.left);
         let top = sanitize(dest_rect.top);
 
@@ -62,12 +50,17 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     apply_masks(canvas, &node.masks);
 
     if node.is_adjustment_layer {
-        if !node.effects.is_empty() {
-            if let Some(filter) = build_filter(&node.effects) {
+        if !node.effects.is_empty() || !node.styles.is_empty() {
+            let mut filter = build_filter(&node.effects);
+            if !node.styles.is_empty() {
+                filter = build_layer_styles_filter(&node.styles, filter);
+            }
+
+            if let Some(f) = filter {
                 let clip_path = collect_content_path(&node.content);
                 canvas.save();
                 canvas.clip_path(&clip_path, ClipOp::Intersect, true);
-                canvas.save_layer(&SaveLayerRec::default().backdrop(&filter));
+                canvas.save_layer(&SaveLayerRec::default().backdrop(&f));
                 canvas.restore();
                 canvas.restore();
             }
@@ -82,22 +75,28 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
     // Check if we need a layer
     let has_matte = node.matte.is_some();
     let has_effects = !node.effects.is_empty();
+    let has_styles = !node.styles.is_empty();
     let non_normal_blend = !matches!(node.blend_mode, CoreBlendMode::Normal);
     let is_group = matches!(node.content, NodeContent::Group(_));
 
     let atomic_opacity_needed = is_group && node_alpha < 1.0;
 
-    let need_layer = has_matte || has_effects || non_normal_blend || atomic_opacity_needed;
+    let need_layer = has_matte || has_effects || has_styles || non_normal_blend || atomic_opacity_needed;
 
     if need_layer {
         let mut paint = Paint::default();
         paint.set_alpha_f(node_alpha);
         paint.set_blend_mode(convert_blend_mode(node.blend_mode));
 
-        // 4.5 Effects
-        if has_effects {
-            let filter = build_filter(&node.effects);
-            paint.set_image_filter(filter);
+        // 4.5 Effects & Styles
+        if has_effects || has_styles {
+            let mut filter = build_filter(&node.effects);
+            if has_styles {
+                filter = build_layer_styles_filter(&node.styles, filter);
+            }
+            if let Some(f) = filter {
+                paint.set_image_filter(f);
+            }
         }
 
         if has_matte {
@@ -114,7 +113,6 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                     MatteMode::Alpha => BlendMode::DstIn,
                     MatteMode::AlphaInverted => BlendMode::DstOut,
                     MatteMode::Luma => {
-                        // Luma to Alpha: A = 0.2126 R + 0.7152 G + 0.0722 B
                         #[rustfmt::skip]
                          let matrix = [
                              0.0, 0.0, 0.0, 0.0, 0.0,
@@ -127,8 +125,6 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                         BlendMode::DstIn
                     }
                     MatteMode::LumaInverted => {
-                        // Luma Inverted to Alpha: A = 1 - (0.2126 R + ...)
-                        // A = -0.2126 R - ... + 1.0
                         #[rustfmt::skip]
                          let matrix = [
                              0.0, 0.0, 0.0, 0.0, 0.0,
@@ -211,19 +207,13 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
         NodeContent::Shape(shape) => {
             let mut path = resolve_geometry(&shape.geometry);
 
-            // 4.2 Winding Rules
             if let Some(fill) = &shape.fill {
                 path.set_fill_type(convert_fill_rule(fill.rule));
-
                 let mut paint = Paint::default();
                 paint.set_style(PaintStyle::Fill);
                 paint.set_alpha_f(sanitize(fill.opacity * alpha));
 
                 if let Some(trim) = &shape.trim {
-                    // Apply trim to fill? Usually Trim Paths only affects Stroke in Lottie.
-                    // But if applied to a shape that has fill, does it trim the outline?
-                    // Lottie spec: "Trim Paths ... affects the path of the shape".
-                    // So yes, it affects geometry.
                     if let Some(effect) = PathEffect::trim(
                         trim.start,
                         trim.end,
@@ -249,11 +239,8 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     paint.set_stroke_miter(sanitize(miter));
                 }
 
-                // 4.3.3 Dashed Lines + Trim
                 let mut path_effect = None;
-
                 if let Some(dash) = &stroke.dash {
-                    eprintln!("Applying Dash Pattern: {:?}", dash);
                     let mut array: Vec<f32> = dash.array.iter().map(|&v| sanitize(v)).collect();
                     if array.len() % 2 != 0 {
                         let clone = array.clone();
@@ -286,7 +273,6 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
         }
         NodeContent::Text(text) => {
             let font_mgr = FontMgr::new();
-            // Try to match family, fallback to common fonts then default
             let typeface = font_mgr
                 .match_family_style(&text.font_family, FontStyle::normal())
                 .or_else(|| font_mgr.match_family_style("Arial", FontStyle::normal()))
@@ -294,8 +280,6 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
 
             if let Some(typeface) = typeface {
                 let font = Font::new(typeface, Some(text.size));
-
-                // Split glyphs into lines
                 let mut lines = Vec::new();
                 let mut current_line = Vec::new();
                 for g in &text.glyphs {
@@ -309,9 +293,7 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                 lines.push(current_line);
 
                 let mut current_y = 0.0;
-
                 for line in lines {
-                    // Measure line width
                     let mut line_width = 0.0;
                     for glyph in &line {
                         let width = font.measure_str(&glyph.character.to_string(), None).0;
@@ -325,7 +307,6 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     };
 
                     let mut current_x = start_x;
-
                     for glyph in line {
                         let char_str = glyph.character.to_string();
                         let (base_advance, _) = font.measure_str(&char_str, None);
@@ -337,11 +318,9 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                         );
                         canvas.translate(draw_pos);
 
-                        // Rotate
                         if glyph.rotation != 0.0 {
                             canvas.rotate(glyph.rotation, None);
                         }
-                        // Scale
                         if glyph.scale != Vec2::ONE {
                             canvas.scale((sanitize(glyph.scale.x), sanitize(glyph.scale.y)));
                         }
@@ -364,10 +343,8 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                             }
                         }
                         canvas.restore();
-
                         current_x += base_advance + text.tracking + glyph.tracking;
                     }
-
                     current_y += text.line_height;
                 }
             }
@@ -375,15 +352,12 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
         NodeContent::Image(image) => {
             let mut drawn = false;
             if let Some(data) = &image.data {
-                // Attempt to decode image
                 let sk_data = Data::new_copy(data);
                 if let Some(img) = SkImage::from_encoded(sk_data) {
                     let mut paint = Paint::default();
                     paint.set_alpha_f(alpha);
-
                     let src = Rect::from_wh(img.width() as f32, img.height() as f32);
                     let dst = Rect::from_wh(image.width as f32, image.height as f32);
-                    // Use Strict constraint
                     canvas.draw_image_rect(
                         img,
                         Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
@@ -393,9 +367,7 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     drawn = true;
                 }
             }
-
             if !drawn {
-                // Placeholder: Magenta Rectangle
                 let mut paint = Paint::default();
                 paint.set_color(Color::MAGENTA);
                 paint.set_style(PaintStyle::Fill);
@@ -419,7 +391,6 @@ fn resolve_mask_path(mask: &lottie_core::Mask) -> Path {
         paint.set_stroke_miter(4.0);
 
         let stroke_rec = StrokeRec::from_paint(&paint, PaintStyle::Stroke, 1.0);
-
         let mut builder = PathBuilder::new();
         if stroke_rec.apply_to_path(&mut builder, &path) {
             let stroke_path = builder.detach(None);
@@ -435,11 +406,8 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
     if masks.is_empty() {
         return;
     }
-
-    // 1. Combine "Add" masks
     let mut add_path = Path::new();
     let mut has_add = false;
-
     for mask in masks {
         if let CoreMaskMode::Add = mask.mode {
             let path = resolve_mask_path(mask);
@@ -450,22 +418,18 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
                 if let Some(result) = add_path.op(&path, PathOp::Union) {
                     add_path = result;
                 } else {
-                    // Fallback if op fails
                     add_path.add_path(&path, (0.0, 0.0), None);
                 }
             }
         }
     }
-
     if has_add {
         canvas.clip_path(&add_path, ClipOp::Intersect, true);
     }
-
-    // 2. Apply others
     for mask in masks {
         match mask.mode {
-            CoreMaskMode::Add => { /* Already handled */ }
-            CoreMaskMode::None => { /* Ignored for clipping */ }
+            CoreMaskMode::Add => {},
+            CoreMaskMode::None => {},
             CoreMaskMode::Subtract => {
                 let path = resolve_mask_path(mask);
                 canvas.clip_path(&path, ClipOp::Difference, true);
@@ -474,7 +438,7 @@ fn apply_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
                 let path = resolve_mask_path(mask);
                 canvas.clip_path(&path, ClipOp::Intersect, true);
             }
-            _ => { /* Lighten, Darken, Difference ignored for clip */ }
+            _ => {}
         }
     }
 }
@@ -486,7 +450,6 @@ fn setup_paint_shader(paint: &mut Paint, core_paint: &CorePaint) {
             paint.set_color4f(c, None);
         }
         CorePaint::Gradient(grad) => {
-            eprintln!("Creating Gradient Shader: {:?}", grad.kind);
             let colors: Vec<Color> = grad
                 .stops
                 .iter()
@@ -523,7 +486,7 @@ fn setup_paint_shader(paint: &mut Paint, core_paint: &CorePaint) {
     }
 }
 
-// Helpers
+// ... helpers ...
 
 fn sanitize(v: f32) -> f32 {
     if v.is_finite() {
@@ -542,14 +505,13 @@ fn glam_to_skia_matrix(m: Mat3) -> Matrix {
     let c2 = m.col(2);
 
     Matrix::new_all(
-        c0.x, c1.x, c2.x, // ScaleX, SkewX, TransX
-        c0.y, c1.y, c2.y, // SkewY, ScaleY, TransY
-        c0.z, c1.z, c2.z, // Persp0, Persp1, Persp2
+        c0.x, c1.x, c2.x,
+        c0.y, c1.y, c2.y,
+        c0.z, c1.z, c2.z,
     )
 }
 
 fn glam_to_skia_color4f(v: Vec4) -> Color4f {
-    // Sanitize color components? Skia might handle them, but safety check:
     Color4f::new(sanitize(v.x), sanitize(v.y), sanitize(v.z), sanitize(v.w))
 }
 
@@ -641,6 +603,8 @@ fn convert_color_channel(c: CoreColorChannel) -> ColorChannel {
         CoreColorChannel::A => ColorChannel::A,
     }
 }
+
+// ... existing build_filter ...
 
 fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
     let mut filter: Option<skia_safe::ImageFilter> = None;
@@ -791,6 +755,9 @@ fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
     filter
 }
 
+// ... existing collect_content_path, resolve_geometry, collect_node_path ...
+// I need to include them.
+
 fn collect_content_path(content: &NodeContent) -> Path {
     match content {
         NodeContent::Group(children) => {
@@ -857,4 +824,154 @@ fn collect_node_path(node: &RenderNode) -> Path {
     let matrix = glam_to_skia_matrix(node.transform);
     path.transform(&matrix);
     path
+}
+
+// Helper for Layer Styles
+fn build_layer_styles_filter(
+    styles: &[CoreLayerStyle],
+    input: Option<skia_safe::ImageFilter>,
+) -> Option<skia_safe::ImageFilter> {
+    let mut current = input;
+
+    for style in styles {
+        match style {
+            CoreLayerStyle::DropShadow {
+                color,
+                opacity,
+                angle,
+                distance,
+                size,
+                spread,
+            } => {
+                let c = glam_to_skia_color_legacy(*color).with_a(sanitize((opacity * 255.0).round()) as u8);
+                let dx = sanitize(distance * (angle.to_radians() - std::f32::consts::PI / 2.0).cos());
+                let dy = sanitize(distance * (angle.to_radians() - std::f32::consts::PI / 2.0).sin());
+                let b = sanitize(*size);
+
+                // Spread logic: Dilate input, then Shadow
+                let shadow_input = if *spread > 0.0 {
+                    let dilation = sanitize(size * (spread / 100.0));
+                    image_filters::dilate((dilation, dilation), current.clone(), None)
+                } else {
+                    current.clone()
+                };
+
+                let shadow = image_filters::drop_shadow_only((dx, dy), (b, b), c, None, shadow_input, None);
+
+                // Composite: Shadow behind Source (Current)
+                // Source Over Shadow
+                // merge([Shadow, Source]) -> Painter's algo -> Draws Shadow then Source. Correct.
+                current = image_filters::merge(vec![shadow, current], None);
+            }
+            CoreLayerStyle::InnerShadow {
+                color,
+                opacity,
+                angle,
+                distance,
+                size,
+                choke,
+            } => {
+                // Inner Shadow
+                // 1. Invert Alpha of Source
+                // 2. Drop Shadow of Inverted
+                // 3. Mask with Source
+                // 4. Composite Over Source
+
+                let c = glam_to_skia_color_legacy(*color).with_a(sanitize((opacity * 255.0).round()) as u8);
+                let dx = sanitize(distance * (angle.to_radians() - std::f32::consts::PI / 2.0).cos());
+                let dy = sanitize(distance * (angle.to_radians() - std::f32::consts::PI / 2.0).sin());
+                let b = sanitize(*size);
+
+                // Invert Alpha
+                // ColorMatrix: A' = 1 - A
+                #[rustfmt::skip]
+                let matrix = [
+                     0.0, 0.0, 0.0, 0.0, 0.0,
+                     0.0, 0.0, 0.0, 0.0, 0.0,
+                     0.0, 0.0, 0.0, 0.0, 0.0,
+                     0.0, 0.0, 0.0, -1.0, 1.0,
+                 ];
+                 let inverted = image_filters::color_filter(
+                     color_filters::matrix_row_major(&matrix, Clamp::Yes),
+                     current.clone(),
+                     None
+                 );
+
+                 // Shadow of Inverted
+                 // Choke? Shrink hole -> Erode Inverted?
+                 let shadow_input = if *choke > 0.0 {
+                     let erosion = sanitize(size * (choke / 100.0));
+                     image_filters::erode((erosion, erosion), inverted, None)
+                 } else {
+                     inverted
+                 };
+
+                 let shadow = image_filters::drop_shadow_only((dx, dy), (b, b), c, None, shadow_input, None);
+
+                 // Mask with Source (Source In Shadow -> Shadow where Source exists)
+                 // KDstIn: Dst (Shadow) In Src (Source)
+                 // blend(DstIn, background=Shadow, foreground=Source)?
+                 // blend: (src, dst) -> src OP dst.
+                 // We want Shadow masked by SourceAlpha.
+                 // Src=Source, Dst=Shadow.
+                 // DstIn: Dst * SrcAlpha.
+                 // blend(mode=DstIn, dst=Shadow, src=Source)
+                 let masked_shadow = image_filters::blend(
+                     BlendMode::DstIn,
+                     shadow,
+                     current.clone(), // Source
+                     None
+                 );
+
+                 // Composite: Source Over Shadow?
+                 // Inner Shadow is inside. So Source (Normal) -> Shadow on top?
+                 // Yes, Inner Shadow draws ON TOP of the object.
+                 // merge([Source, Shadow])
+                 current = image_filters::merge(vec![current, masked_shadow], None);
+            }
+            CoreLayerStyle::OuterGlow {
+                color,
+                opacity,
+                size,
+                range,
+            } => {
+                let c = glam_to_skia_color_legacy(*color).with_a(sanitize((opacity * 255.0).round()) as u8);
+                let b = sanitize(*size);
+
+                // Spread/Range logic similar to DropShadow
+                let glow_input = if *range > 0.0 {
+                    let dilation = sanitize(size * (range / 100.0));
+                    image_filters::dilate((dilation, dilation), current.clone(), None)
+                } else {
+                    current.clone()
+                };
+
+                let glow = image_filters::drop_shadow_only((0.0, 0.0), (b, b), c, None, glow_input, None);
+
+                // Composite: Glow Behind Source
+                current = image_filters::merge(vec![glow, current], None);
+            }
+            CoreLayerStyle::Stroke {
+                color,
+                width,
+                opacity,
+            } => {
+                // Outside Stroke
+                let c = glam_to_skia_color_legacy(*color).with_a(sanitize((opacity * 255.0).round()) as u8);
+                let s = sanitize(*width);
+
+                // Dilate
+                let dilated = image_filters::dilate((s, s), current.clone(), None);
+
+                // Colorize Dilated
+                // SrcIn with Color?
+                let color_filter = color_filters::blend(c, BlendMode::SrcIn);
+                let stroke_base = image_filters::color_filter(color_filter.unwrap(), dilated, None);
+
+                // Composite: Stroke Behind Source
+                current = image_filters::merge(vec![stroke_base, current], None);
+            }
+        }
+    }
+    current
 }

@@ -177,7 +177,7 @@ impl LottiePlayer {
                     alpha: 1.0,
                     blend_mode: BlendMode::Normal,
                     content: NodeContent::Group(vec![]),
-                    masks: vec![],
+                    masks: vec![], styles: vec![],
                     matte: None,
                     effects: vec![],
                     is_adjustment_layer: false,
@@ -290,7 +290,7 @@ impl<'a> SceneGraphBuilder<'a> {
             alpha: 1.0,
             blend_mode: BlendMode::Normal,
             content: NodeContent::Group(nodes),
-            masks: vec![],
+            masks: vec![], styles: vec![],
             matte: None,
             effects: vec![],
             is_adjustment_layer: false,
@@ -638,6 +638,7 @@ impl<'a> SceneGraphBuilder<'a> {
 
         // Effects
         let effects = self.process_effects(layer);
+        let styles = self.process_layer_styles(layer);
 
         Some(RenderNode {
             transform,
@@ -647,8 +648,77 @@ impl<'a> SceneGraphBuilder<'a> {
             masks,
             matte: None,
             effects,
+            styles,
             is_adjustment_layer,
         })
+    }
+
+    fn process_layer_styles(&self, layer: &data::Layer) -> Vec<LayerStyle> {
+        let mut styles = Vec::new();
+        if let Some(sy_list) = &layer.sy {
+            for sy in sy_list {
+                let ty = sy.ty.unwrap_or(8);
+                let mut kind = None;
+                if ty == 0 { kind = Some("DropShadow"); }
+                else if ty == 1 { kind = Some("InnerShadow"); }
+                else if ty == 2 { kind = Some("OuterGlow"); }
+                else if let Some(nm) = &sy.nm {
+                    if nm.contains("Stroke") { kind = Some("Stroke"); }
+                }
+
+                if kind.is_none() {
+                    if ty == 3 || ty == 8 {
+                        kind = Some("Stroke");
+                    }
+                }
+
+                if let Some(k) = kind {
+                    match k {
+                        "DropShadow" => {
+                             let color = self.resolve_json_vec4_arr(&sy.c, self.frame - layer.st);
+                             let opacity = Animator::resolve(&sy.o, self.frame - layer.st, |v| *v / 100.0, 1.0);
+                             let angle = Animator::resolve(&sy.a, self.frame - layer.st, |v| *v, 0.0);
+                             let distance = Animator::resolve(&sy.d, self.frame - layer.st, |v| *v, 0.0);
+                             let size = Animator::resolve(&sy.s, self.frame - layer.st, |v| *v, 0.0);
+                             let spread = Animator::resolve(&sy.ch, self.frame - layer.st, |v| *v, 0.0);
+                             styles.push(LayerStyle::DropShadow {
+                                 color, opacity, angle, distance, size, spread
+                             });
+                        },
+                        "InnerShadow" => {
+                             let color = self.resolve_json_vec4_arr(&sy.c, self.frame - layer.st);
+                             let opacity = Animator::resolve(&sy.o, self.frame - layer.st, |v| *v / 100.0, 1.0);
+                             let angle = Animator::resolve(&sy.a, self.frame - layer.st, |v| *v, 0.0);
+                             let distance = Animator::resolve(&sy.d, self.frame - layer.st, |v| *v, 0.0);
+                             let size = Animator::resolve(&sy.s, self.frame - layer.st, |v| *v, 0.0);
+                             let choke = Animator::resolve(&sy.ch, self.frame - layer.st, |v| *v, 0.0);
+                             styles.push(LayerStyle::InnerShadow {
+                                 color, opacity, angle, distance, size, choke
+                             });
+                        },
+                        "OuterGlow" => {
+                             let color = self.resolve_json_vec4_arr(&sy.c, self.frame - layer.st);
+                             let opacity = Animator::resolve(&sy.o, self.frame - layer.st, |v| *v / 100.0, 1.0);
+                             let size = Animator::resolve(&sy.s, self.frame - layer.st, |v| *v, 0.0);
+                             let range = Animator::resolve(&sy.ch, self.frame - layer.st, |v| *v, 0.0);
+                             styles.push(LayerStyle::OuterGlow {
+                                 color, opacity, size, range
+                             });
+                        },
+                        "Stroke" => {
+                             let color = self.resolve_json_vec4_arr(&sy.c, self.frame - layer.st);
+                             let opacity = Animator::resolve(&sy.o, self.frame - layer.st, |v| *v / 100.0, 1.0);
+                             let width = Animator::resolve(&sy.s, self.frame - layer.st, |v| *v, 0.0);
+                             styles.push(LayerStyle::Stroke {
+                                 color, width, opacity
+                             });
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+        styles
     }
 
     fn process_effects(&self, layer: &data::Layer) -> Vec<Effect> {
@@ -840,6 +910,23 @@ impl<'a> SceneGraphBuilder<'a> {
                 }
             },
             Vec4::ZERO,
+        )
+    }
+
+    fn resolve_json_vec4_arr(&self, prop: &data::Property<Vec<f32>>, frame: f32) -> Vec4 {
+        Animator::resolve(
+            prop,
+            frame,
+            |v| {
+                if v.len() >= 4 {
+                    Vec4::new(v[0], v[1], v[2], v[3])
+                } else if v.len() >= 3 {
+                    Vec4::new(v[0], v[1], v[2], 1.0)
+                } else {
+                    Vec4::ZERO
+                }
+            },
+            Vec4::ONE,
         )
     }
 
@@ -1157,7 +1244,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 stroke: None,
                                 trim: trim.clone(),
                             }),
-                            masks: vec![],
+                            masks: vec![], styles: vec![],
                             matte: None,
                             effects: vec![],
                             is_adjustment_layer: false,
@@ -1200,7 +1287,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 stroke: None,
                                 trim: trim.clone(),
                             }),
-                            masks: vec![],
+                            masks: vec![], styles: vec![],
                             matte: None,
                             effects: vec![],
                             is_adjustment_layer: false,
@@ -1280,7 +1367,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 }),
                                 trim: trim.clone(),
                             }),
-                            masks: vec![],
+                            masks: vec![], styles: vec![],
                             matte: None,
                             effects: vec![],
                             is_adjustment_layer: false,
@@ -1344,7 +1431,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 }),
                                 trim: trim.clone(),
                             }),
-                            masks: vec![],
+                            masks: vec![], styles: vec![],
                             matte: None,
                             effects: vec![],
                             is_adjustment_layer: false,
@@ -1358,7 +1445,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         alpha: 1.0,
                         blend_mode: BlendMode::Normal,
                         content: NodeContent::Group(group_nodes),
-                        masks: vec![],
+                        masks: vec![], styles: vec![],
                         matte: None,
                         effects: vec![],
                         is_adjustment_layer: false,
@@ -1933,7 +2020,7 @@ mod tests {
             tm: None,
             masks_properties: None,
             tt: None,
-            ef: None,
+            ef: None, sy: None,
             ref_id: Some("image_0".to_string()),
             w: None,
             h: None,
@@ -2206,7 +2293,7 @@ mod tests {
             tm: None,
             masks_properties: None,
             tt: None,
-            ef: None,
+            ef: None, sy: None,
             ref_id: None,
             w: None,
             h: None,
@@ -2244,7 +2331,7 @@ mod tests {
             }),
             masks_properties: None,
             tt: None,
-            ef: None,
+            ef: None, sy: None,
             ref_id: Some("precomp1".to_string()),
             w: Some(100),
             h: Some(100),
@@ -2371,7 +2458,7 @@ mod tests {
             sh: None,
             shapes: Some(vec![]),
             t: None,
-            ef: Some(vec![tint_ef]),
+            sy: None, ef: Some(vec![tint_ef]),
             ..data::Layer {
                 ty: 4,
                 ind: None,
@@ -2385,7 +2472,7 @@ mod tests {
                 tm: None,
                 masks_properties: None,
                 tt: None,
-                ef: None,
+                ef: None, sy: None,
                 ref_id: None,
                 w: None,
                 h: None,
@@ -2489,7 +2576,7 @@ fn test_text_animator() {
         tm: None,
         masks_properties: None,
         tt: None,
-        ef: None,
+        ef: None, sy: None,
         ref_id: None,
         w: None,
         h: None,
@@ -2511,7 +2598,7 @@ fn test_text_animator() {
             tm: None,
             masks_properties: None,
             tt: None,
-            ef: None,
+            ef: None, sy: None,
             ref_id: None,
             w: None,
             h: None,
@@ -2634,7 +2721,7 @@ fn test_text_animator() {
             tm: None,
             masks_properties: None,
             tt: None,
-            ef: None,
+            ef: None, sy: None,
             ref_id: Some("img_b64".to_string()),
             w: None,
             h: None,
@@ -2836,7 +2923,7 @@ fn test_text_animator() {
         let layer = data::Layer {
             ty: 4,
             ind: Some(1),
-            ef: Some(vec![stroke_ef]),
+            sy: None, ef: Some(vec![stroke_ef]),
             parent: None,
             nm: None,
             ip: 0.0,

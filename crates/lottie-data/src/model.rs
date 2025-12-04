@@ -43,6 +43,8 @@ pub struct Layer {
     pub tt: Option<u8>,
     #[serde(default)]
     pub ef: Option<Vec<Effect>>,
+    #[serde(default)]
+    pub sy: Option<Vec<LayerStyle>>,
 
     // Type specific (flattened manually as optional fields)
     #[serde(default, rename = "refId")]
@@ -105,6 +107,28 @@ pub struct EffectValue {
     pub ix: Option<u32>,
     #[serde(default)]
     pub v: Option<Property<serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LayerStyle {
+    #[serde(default)]
+    pub ty: Option<u8>,
+    #[serde(default)]
+    pub nm: Option<String>,
+    #[serde(default)]
+    pub c: Property<Vec<f32>>, // Color
+    #[serde(default)]
+    pub o: Property<f32>,      // Opacity
+    #[serde(default)]
+    pub a: Property<f32>,      // Angle
+    #[serde(default)]
+    pub d: Property<f32>,      // Distance
+    #[serde(default)]
+    pub s: Property<f32>,      // Size / Blur
+    #[serde(default)]
+    pub ch: Property<f32>,     // Choke / Spread / Range
+    #[serde(default)]
+    pub bm: Option<Property<f32>>, // Blend Mode
 }
 
 // Shapes
