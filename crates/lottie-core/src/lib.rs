@@ -99,8 +99,8 @@ struct PolystarParams {
     pos: Vec2,
     outer_radius: f32,
     inner_radius: f32,
-    _outer_roundness: f32,
-    _inner_roundness: f32,
+    outer_roundness: f32,
+    inner_roundness: f32,
     rotation: f32,
     points: f32,
     kind: u8,           // 1=star, 2=polygon
@@ -1303,8 +1303,8 @@ impl<'a> SceneGraphBuilder<'a> {
                             pos,
                             outer_radius: or,
                             inner_radius: ir,
-                            _outer_roundness: os,
-                            _inner_roundness: is,
+                            outer_roundness: os,
+                            inner_roundness: is,
                             rotation: r,
                             points: pt,
                             kind: sr.sy,
@@ -1783,6 +1783,13 @@ impl<'a> SceneGraphBuilder<'a> {
         }
 
         let is_star = params.kind == 1;
+
+        // Check for roundness (Flower shape)
+        // If either outer or inner roundness is significant, we generate smooth cubic beziers.
+        // We ignore `corner_radius` in this mode as the shape is intrinsically smooth.
+        let has_roundness =
+            params.outer_roundness.abs() > 0.01 || (is_star && params.inner_roundness.abs() > 0.01);
+
         let total_points = if is_star {
             num_points * 2.0
         } else {
@@ -1792,6 +1799,68 @@ impl<'a> SceneGraphBuilder<'a> {
         let current_angle = (params.rotation - 90.0).to_radians();
         let angle_step = 2.0 * PI / total_points as f64;
 
+        if has_roundness {
+            // "Flower" Generation (Cubic Bezier)
+            let mut elements = Vec::with_capacity(total_points);
+
+            for i in 0..total_points {
+                let (r, roundness) = if is_star {
+                    if i % 2 == 0 {
+                        (params.outer_radius, params.outer_roundness)
+                    } else {
+                        (params.inner_radius, params.inner_roundness)
+                    }
+                } else {
+                    (params.outer_radius, params.outer_roundness)
+                };
+
+                let angle = current_angle as f64 + angle_step * i as f64;
+                let cos_a = angle.cos();
+                let sin_a = angle.sin();
+
+                let x = params.pos.x as f64 + r as f64 * cos_a;
+                let y = params.pos.y as f64 + r as f64 * sin_a;
+                let vertex = Point::new(x, y);
+
+                // Tangent Vector T = (-sin, cos) (Perpendicular to Radius (cos, sin))
+                let tx = -sin_a;
+                let ty = cos_a;
+                let tangent = kurbo::Vec2::new(tx, ty);
+
+                // cp_dist = radius * theta * roundness_pct * 0.01
+                let cp_d = r as f64 * angle_step * roundness as f64 * 0.01;
+
+                // Incoming CP (from previous segment): Vertex - T * d
+                let in_cp = vertex - tangent * cp_d;
+                // Outgoing CP (to next segment): Vertex + T * d
+                let out_cp = vertex + tangent * cp_d;
+
+                elements.push((vertex, in_cp, out_cp));
+            }
+
+            // Build Path
+            // Move to first vertex
+            if elements.is_empty() {
+                return path;
+            }
+            path.move_to(elements[0].0);
+
+            let len = elements.len();
+            for i in 0..len {
+                let curr_idx = i;
+                let next_idx = (i + 1) % len;
+
+                let curr_out_cp = elements[curr_idx].2;
+                let next_in_cp = elements[next_idx].1;
+                let next_vertex = elements[next_idx].0;
+
+                path.curve_to(curr_out_cp, next_in_cp, next_vertex);
+            }
+            path.close_path();
+            return path;
+        }
+
+        // Legacy (Straight) Generation with Round Corners
         let mut vertices = Vec::with_capacity(total_points);
         for i in 0..total_points {
             let r = if is_star {
@@ -2169,6 +2238,154 @@ mod tests {
                 if let renderer::ShapeGeometry::Path(path) = &s.geometry {
                     let count = path.elements().len();
                     assert_eq!(count, 11);
+                } else {
+                    panic!("Expected Path Geometry");
+                }
+            }
+            _ => panic!("Expected Shape"),
+        }
+    }
+
+    #[test]
+    fn test_poly_flower() {
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
+
+        let poly = data::Shape::Polystar(data::PolystarShape {
+            nm: None,
+            p: data::PositionProperty::Unified(data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            }),
+            or: data::Property {
+                k: data::Value::Static(20.0),
+                ..Default::default()
+            },
+            os: data::Property {
+                k: data::Value::Static(50.0), // 50% Roundness
+                ..Default::default()
+            },
+            r: data::Property::default(),
+            pt: data::Property {
+                k: data::Value::Static(5.0),
+                ..Default::default()
+            },
+            sy: 2, // Polygon
+            ir: None,
+            is: None,
+        });
+
+        let fill = data::Shape::Fill(data::FillShape {
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
+        });
+
+        let shapes = vec![poly, fill];
+        let nodes = builder.process_shapes(&shapes, 0.0);
+
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].content {
+            NodeContent::Shape(s) => {
+                if let renderer::ShapeGeometry::Path(path) = &s.geometry {
+                    // Check for curves
+                    let mut curve_count = 0;
+                    for el in path.elements() {
+                        if let PathEl::CurveTo(_, _, _) = el {
+                            curve_count += 1;
+                        }
+                    }
+                    // 5 points polygon = 5 vertices.
+                    // Should have 5 cubic curves.
+                    assert_eq!(curve_count, 5, "Expected 5 cubic curves for 5-point poly flower");
+                } else {
+                    panic!("Expected Path Geometry");
+                }
+            }
+            _ => panic!("Expected Shape"),
+        }
+    }
+
+    #[test]
+    fn test_polystar_flower() {
+        let model = LottieJson {
+            v: None,
+            ip: 0.0,
+            op: 60.0,
+            fr: 60.0,
+            w: 100,
+            h: 100,
+            layers: vec![],
+            assets: vec![],
+        };
+        let assets = HashMap::new();
+        let builder = SceneGraphBuilder::new(&model, 0.0, &assets, None);
+
+        let star = data::Shape::Polystar(data::PolystarShape {
+            nm: None,
+            p: data::PositionProperty::Unified(data::Property {
+                k: data::Value::Static([50.0, 50.0]),
+                ..Default::default()
+            }),
+            or: data::Property {
+                k: data::Value::Static(20.0),
+                ..Default::default()
+            },
+            os: data::Property {
+                k: data::Value::Static(50.0), // 50% Roundness (Flower)
+                ..Default::default()
+            },
+            r: data::Property::default(),
+            pt: data::Property {
+                k: data::Value::Static(5.0),
+                ..Default::default()
+            },
+            sy: 1, // Star
+            ir: Some(data::Property {
+                k: data::Value::Static(10.0),
+                ..Default::default()
+            }),
+            is: None,
+        });
+
+        let fill = data::Shape::Fill(data::FillShape {
+            nm: None,
+            c: data::Property::default(),
+            o: data::Property::default(),
+            r: None,
+        });
+
+        let shapes = vec![star, fill];
+        let nodes = builder.process_shapes(&shapes, 0.0);
+
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].content {
+            NodeContent::Shape(s) => {
+                if let renderer::ShapeGeometry::Path(path) = &s.geometry {
+                    // Check for curves
+                    let mut curve_count = 0;
+                    for el in path.elements() {
+                        if let PathEl::CurveTo(_, _, _) = el {
+                            curve_count += 1;
+                        }
+                    }
+                    // 5 points star has 10 vertices.
+                    // New logic iterates 10 times, each adds a CurveTo.
+                    assert_eq!(
+                        curve_count, 10,
+                        "Expected 10 cubic curves for 5-point star flower"
+                    );
                 } else {
                     panic!("Expected Path Geometry");
                 }
