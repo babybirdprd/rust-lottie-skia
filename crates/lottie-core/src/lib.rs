@@ -1556,7 +1556,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 Some("o") => {
                                     offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0)
                                 }
-                                Some("d") | Some("g") => {
+                                Some("d") | Some("v") | Some("g") => {
                                     array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0))
                                 }
                                 _ => {}
@@ -1567,6 +1567,15 @@ impl<'a> SceneGraphBuilder<'a> {
                                 let clone = array.clone();
                                 array.extend(clone);
                             }
+
+                            // Normalize Offset
+                            let total_length: f32 = array.iter().sum();
+                            if total_length > 0.0 {
+                                offset = (offset % total_length + total_length) % total_length;
+                            } else {
+                                offset = 0.0;
+                            }
+
                             dash = Some(DashPattern { array, offset });
                         }
                     }
@@ -1625,7 +1634,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                 Some("o") => {
                                     offset = Animator::resolve(&prop.v, frame, |v| *v, 0.0);
                                 }
-                                Some("d") | Some("g") => {
+                                Some("d") | Some("v") | Some("g") => {
                                     array.push(Animator::resolve(&prop.v, frame, |v| *v, 0.0));
                                 }
                                 _ => {}
@@ -1636,6 +1645,15 @@ impl<'a> SceneGraphBuilder<'a> {
                                 let clone = array.clone();
                                 array.extend(clone);
                             }
+
+                            // Normalize Offset
+                            let total_length: f32 = array.iter().sum();
+                            if total_length > 0.0 {
+                                offset = (offset % total_length + total_length) % total_length;
+                            } else {
+                                offset = 0.0;
+                            }
+
                             dash = Some(DashPattern { array, offset });
                         }
                     }
