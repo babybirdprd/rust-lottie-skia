@@ -356,47 +356,36 @@ impl Animator {
         #[cfg(feature = "expressions")]
         if let Some(expr) = &prop.x {
             if let Some(eval) = evaluator {
-                 let context = eval.context();
-                 let js_val = base_value.to_js_value(context);
-
                  let time = frame / frame_rate; // Seconds
-                 // We need to pass evaluator methods but we are holding context mutable borrow.
-                 // Actually evaluate takes `&mut self`. We cannot borrow context then call evaluate.
-                 // We need to finish context borrowing first.
-                 // `js_val` is `JsValue` which is Garbage Collected, so it should be fine to hold.
 
-                 // However, we need to drop `context` borrow before calling `evaluate`.
-                 // But `eval.context()` returns `&mut Context`.
-                 // We only need it to create `js_val`.
+                 // Calculate Loop Value (pre-calc logic for loopOut("cycle"))
+                 let loop_value = if let Value::Animated(keyframes) = &prop.k {
+                     if !keyframes.is_empty() {
+                         let first_t = keyframes[0].t;
+                         let last_t = keyframes[keyframes.len() - 1].t;
+                         let duration = last_t - first_t;
 
-                 // Refactor:
-                 // 1. Create js_val using context.
-                 // 2. Call evaluate.
-
-                 // But `evaluate` is on `ExpressionEvaluator`.
-                 // We cannot call `eval.evaluate` if we still hold `context`.
-                 // Scope it.
-
-                 // Wait, I cannot call `base_value.to_js_value(eval.context())` and then `eval.evaluate` in the same scope if `to_js_value` returns something that borrows context?
-                 // No, `JsValue` does not borrow context.
-                 // But `eval.context()` takes `&mut self`.
-                 // `eval.evaluate` takes `&mut self`.
-                 // Rust borrow checker will complain if I do:
-                 // eval.evaluate(..., base_value.to_js_value(eval.context()), ...)
-                 // Because argument evaluation happens before function call, but it's nested mutable borrows?
-                 // No, `eval.context()` borrows `eval` mutably. It returns `&mut Context`.
-                 // The borrow ends when `to_js_value` returns.
-                 // Then `eval.evaluate` borrows `eval` mutably.
-                 // This should be fine as long as they are not overlapping.
-
-                 // However, `evaluate` takes `&JsValue`.
-
-                 let js_val = {
-                     let ctx = eval.context();
-                     base_value.to_js_value(ctx)
+                         if duration > 0.0 && frame > last_t {
+                             let t_since_end = frame - last_t;
+                             let cycle_offset = t_since_end % duration;
+                             let cycle_frame = first_t + cycle_offset;
+                             Self::resolve_keyframes(prop, cycle_frame, &converter, default.clone())
+                         } else {
+                             base_value.clone()
+                         }
+                     } else {
+                         base_value.clone()
+                     }
+                 } else {
+                     base_value.clone()
                  };
 
-                 match eval.evaluate(expr, &js_val, time, frame_rate) {
+                 let (js_val, js_loop_val) = {
+                     let ctx = eval.context();
+                     (base_value.to_js_value(ctx), loop_value.to_js_value(ctx))
+                 };
+
+                 match eval.evaluate(expr, &js_val, &js_loop_val, time, frame_rate) {
                      Ok(res) => {
                           let context = eval.context();
                           if let Some(val) = U::from_js_value(&res, context) {
