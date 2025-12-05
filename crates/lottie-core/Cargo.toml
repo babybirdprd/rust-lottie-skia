@@ -11,3 +11,10 @@ glam.workspace = true
 kurbo.workspace = true
 thiserror.workspace = true
 base64 = "0.22.1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "animator_bench"
+harness = false

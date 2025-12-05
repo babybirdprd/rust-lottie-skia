@@ -221,8 +221,14 @@ impl Animator {
                     return default;
                 }
 
-                // If before first keyframe
-                if frame < keyframes[0].t {
+                // Optimization: Binary Search
+                // Find the first keyframe where kf.t > frame
+                // 'idx' will be the index of that keyframe.
+                // The current segment is between idx-1 and idx.
+                let idx = keyframes.partition_point(|kf| kf.t <= frame);
+
+                // If idx == 0, then all keyframes have t > frame. frame is before start.
+                if idx == 0 {
                     if let Some(s) = &keyframes[0].s {
                         return converter(s);
                     }
@@ -230,80 +236,137 @@ impl Animator {
                 }
 
                 let len = keyframes.len();
-                // If after last keyframe
-                if frame >= keyframes[len - 1].t {
-                    let last = &keyframes[len - 1];
-                    // Use end value if present, else start value
-                    if let Some(e) = &last.e {
-                        return converter(e);
-                    }
-                    if let Some(s) = &last.s {
-                        return converter(s);
-                    }
-                    return default;
+                // If idx == len, then all keyframes have t <= frame. frame is after end (or exactly at end).
+                if idx >= len {
+                     let last = &keyframes[len - 1];
+                     // Use end value if present, else start value
+                     if let Some(e) = &last.e {
+                         return converter(e);
+                     }
+                     if let Some(s) = &last.s {
+                         return converter(s);
+                     }
+                     return default;
                 }
 
-                // Find segment
-                for i in 0..len - 1 {
-                    let kf_start = &keyframes[i];
-                    let kf_end = &keyframes[i + 1];
+                // Segment is [idx-1, idx]
+                let kf_start = &keyframes[idx - 1];
+                let kf_end = &keyframes[idx];
 
-                    if frame >= kf_start.t && frame < kf_end.t {
-                        let start_val = kf_start
-                            .s
-                            .as_ref()
-                            .map(|v| converter(v))
-                            .unwrap_or(default.clone());
-                        // End value: explicit 'e', or next keyframe's 's'?
-                        // Lottie usually has 's' on start keyframe and 's' on next keyframe acting as end.
-                        // Sometimes 'e' is on start keyframe.
-                        let end_val = kf_start
-                            .e
-                            .as_ref()
-                            .map(|v| converter(v))
-                            .or_else(|| kf_end.s.as_ref().map(|v| converter(v)))
-                            .unwrap_or(start_val.clone());
+                let start_val = kf_start
+                    .s
+                    .as_ref()
+                    .map(|v| converter(v))
+                    .unwrap_or(default.clone());
 
-                        let duration = kf_end.t - kf_start.t;
-                        if duration <= 0.0 {
-                            return start_val;
-                        }
+                // End value logic
+                let end_val = kf_start
+                    .e
+                    .as_ref()
+                    .map(|v| converter(v))
+                    .or_else(|| kf_end.s.as_ref().map(|v| converter(v)))
+                    .unwrap_or(start_val.clone());
 
-                        let mut local_t = (frame - kf_start.t) / duration;
+                let duration = kf_end.t - kf_start.t;
+                if duration <= 0.0 {
+                    return start_val;
+                }
 
-                        // Easing
-                        // Out tangent of start, In tangent of end
-                        let p1 = if let Some(o) = kf_start.o {
-                            Vec2::new(o[0], o[1])
-                        } else {
-                            Vec2::new(0.0, 0.0)
-                        };
-                        let p2 = if let Some(i) = kf_end.i {
-                            Vec2::new(i[0], i[1])
-                        } else {
-                            Vec2::new(1.0, 1.0)
-                        };
+                let mut local_t = (frame - kf_start.t) / duration;
 
-                        // If Hold keyframe
-                        if let Some(h) = kf_start.h {
-                            if h == 1 {
-                                return start_val;
-                            }
-                        }
+                // Easing
+                let p1 = if let Some(o) = kf_start.o {
+                    Vec2::new(o[0], o[1])
+                } else {
+                    Vec2::new(0.0, 0.0)
+                };
+                let p2 = if let Some(i) = kf_end.i {
+                    Vec2::new(i[0], i[1])
+                } else {
+                    Vec2::new(1.0, 1.0)
+                };
 
-                        local_t = solve_cubic_bezier(p1, p2, local_t);
-
-                        return start_val.lerp_spatial(
-                            &end_val,
-                            local_t,
-                            kf_end.ti.as_ref(),
-                            kf_start.to.as_ref(),
-                        );
+                // If Hold keyframe
+                if let Some(h) = kf_start.h {
+                    if h == 1 {
+                        return start_val;
                     }
                 }
 
-                default
+                local_t = solve_cubic_bezier(p1, p2, local_t);
+
+                start_val.lerp_spatial(
+                    &end_val,
+                    local_t,
+                    kf_end.ti.as_ref(),
+                    kf_start.to.as_ref(),
+                )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lottie_data::model::{Keyframe, Value};
+
+    #[test]
+    fn test_animator_resolve_binary_search() {
+        // Setup a property with keyframes at 0, 10, 20
+        let keyframes = vec![
+            Keyframe {
+                t: 0.0,
+                s: Some(0.0),
+                e: Some(10.0),
+                i: None, o: None, to: None, ti: None, h: None,
+            },
+            Keyframe {
+                t: 10.0,
+                s: Some(10.0),
+                e: Some(20.0),
+                i: None, o: None, to: None, ti: None, h: None,
+            },
+            Keyframe {
+                t: 20.0,
+                s: Some(20.0),
+                e: Some(30.0),
+                i: None, o: None, to: None, ti: None, h: None,
+            }
+        ];
+
+        let prop = Property {
+            a: 1,
+            k: Value::Animated(keyframes),
+            ix: None,
+        };
+
+        let conv = |v: &f32| *v;
+
+        // 1. Exact match start
+        assert_eq!(Animator::resolve(&prop, 0.0, conv, -1.0), 0.0);
+
+        // 2. Exact match middle
+        assert_eq!(Animator::resolve(&prop, 10.0, conv, -1.0), 10.0);
+
+        // 3. Exact match end
+        // At t=20, it is at the last keyframe. Existing logic treats 'after or at last' as using the End value if present.
+        // The last keyframe has s=20, e=30.
+        assert_eq!(Animator::resolve(&prop, 20.0, conv, -1.0), 30.0);
+
+        // 4. Before first
+        assert_eq!(Animator::resolve(&prop, -5.0, conv, -1.0), 0.0);
+
+        // 5. After last
+        // keyframes[2].e is 30.0.
+        assert_eq!(Animator::resolve(&prop, 25.0, conv, -1.0), 30.0);
+
+        // 6. Mid-segment (linear interpolation default)
+        // t=5 (between 0 and 10). Lerp 0->10 at 0.5 -> 5.0.
+        assert_eq!(Animator::resolve(&prop, 5.0, conv, -1.0), 5.0);
+
+        // 7. Mid-segment 2
+        // t=15 (between 10 and 20). Lerp 10->20 at 0.5 -> 15.0.
+        assert_eq!(Animator::resolve(&prop, 15.0, conv, -1.0), 15.0);
     }
 }
