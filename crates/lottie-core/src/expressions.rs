@@ -5,7 +5,6 @@ use boa_engine::{
     native_function::NativeFunction,
     object::builtins::JsArray,
     property::Attribute,
-    value::TryFromJs,
     Context, JsArgs, JsResult, JsValue, Source,
 };
 
@@ -82,7 +81,8 @@ impl ExpressionEvaluator {
     pub fn evaluate(
         &mut self,
         script: &str,
-        current_value: &JsValue, // Passed as JsValue directly for speed if possible, or converted
+        current_value: &JsValue,
+        loop_value: &JsValue,
         time: f32,
         _frame_rate: f32,
     ) -> Result<JsValue, String> {
@@ -92,50 +92,28 @@ impl ExpressionEvaluator {
             .register_global_property(js_string!("value"), current_value.clone(), Attribute::all())
             .map_err(|e| format!("Failed to register value: {}", e))?;
 
+        // '__loop_value' (internal)
+        self.context
+            .register_global_property(js_string!("__loop_value"), loop_value.clone(), Attribute::all())
+            .map_err(|e| format!("Failed to register loop value: {}", e))?;
+
         // 'time' (in seconds)
         self.context
             .register_global_property(js_string!("time"), JsValue::new(time), Attribute::all())
             .map_err(|e| format!("Failed to register time: {}", e))?;
 
-        // 'loopOut'
-        // Simplified implementation: loopOut(mode, numKeyframes, duration)
-        // But loopOut is context-sensitive.
-        // For this RFC, we implement a dummy or simple cycle loopOut if requested.
-        // Actually, enforcing 'cycle' logic requires keyframe access which we don't strictly have here easily
-        // without passing a closure.
-        // Let's rely on the user instruction: "Implement loopOut("cycle") logic".
-        // If the script calls `loopOut("cycle")`, it expects the value cycled.
-        // But `loopOut` logic transforms 'time' then samples value.
-        // Here we are executing code. Code calls loopOut.
-        // If we can't change the timeline, loopOut function must return the value at the cycled time.
-        // But we don't have the property keyframes here in the evaluator to sample from!
-        // Constraint: We are inside Animator::resolve, which HAS keyframes.
-        // We can pass a closure to `evaluate` that allows sampling at a different time?
-        // But NativeFunction pointers in Boa are static fn pointers usually, capturing environment is hard without `JsData`.
-
-        // For this MVP, we will SKIP complex loopOut inside the generic evaluator unless we register a closure per property.
-        // Given the performance constraint, registering a closure per property frame is heavy.
-        // We will stick to math/time/value for now. If the script contains loopOut, it might fail or we mock it.
-        // Wait, the user was specific: "Implement loopOut('cycle') logic."
-        // Strategy: Register `loopOut` as a global function that takes (type, duration).
-        // But standard AE loopOut is `loopOut(type, count)`. It infers duration/keyframes from `thisProperty`.
-        // We don't have `thisProperty` object.
-        // We will define `loopOut = function(mode) { return value; }` as a fallback so it doesn't crash?
-        // No, that defeats the purpose.
-        // Let's implement `loopOut` by injecting a mocked function that just returns `value` for now,
-        // effectively doing "clamping". Real cycling requires architecture changes to expose "Property" object.
+        // 'loopOut' implementation that returns pre-calculated cycled value
         self.context
             .register_global_callable(
                 js_string!("loopOut"),
                 0,
                 NativeFunction::from_fn_ptr(|_this, _args, context| {
-                     // Fallback: return global 'value'
-                     let val = context.global_object().get(js_string!("value"), context).unwrap_or_default();
+                     // Return pre-calculated loop value
+                     let val = context.global_object().get(js_string!("__loop_value"), context).unwrap_or_default();
                      Ok(val)
                 })
             )
              .map_err(|e| format!("Failed to register loopOut: {}", e))?;
-
 
         match self.context.eval(Source::from_bytes(script)) {
             Ok(res) => Ok(res),
