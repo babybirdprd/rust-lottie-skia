@@ -14,7 +14,7 @@ pub struct LottieJson {
     pub assets: Vec<Asset>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Layer {
     // Common
     #[serde(default)]
@@ -691,6 +691,22 @@ pub struct TextData {
     pub d: Property<TextDocument>,
     #[serde(default)]
     pub a: Option<Vec<TextAnimatorData>>,
+    #[serde(default)]
+    pub p: Option<TextPathData>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextPathData {
+    #[serde(default)]
+    pub m: Option<u32>, // Mask Index
+    #[serde(default)]
+    pub f: Option<Property<f32>>, // First Margin
+    #[serde(default)]
+    pub l: Option<Property<f32>>, // Last Margin
+    #[serde(default)]
+    pub a: Option<Property<f32>>, // Force Alignment
+    #[serde(default)]
+    pub p: Option<Property<f32>>, // Perpendicular
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

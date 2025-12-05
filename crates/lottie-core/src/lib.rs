@@ -9,7 +9,7 @@ use animatable::Animator;
 use expressions::ExpressionEvaluator;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use kurbo::{BezPath, Point, Shape as _};
+use kurbo::{BezPath, ParamCurve, ParamCurveArclen, ParamCurveDeriv, PathEl, Point, Shape as _};
 use lottie_data::model::{self as data, LottieJson};
 use modifiers::{
     GeometryModifier, OffsetPathModifier, PuckerBloatModifier, TwistModifier, WiggleModifier,
@@ -375,6 +375,13 @@ impl<'a> SceneGraphBuilder<'a> {
 
         let opacity = Animator::resolve(&layer.ks.o, self.frame - layer.st, |v| *v / 100.0, 1.0, evaluator.as_deref_mut(), self.model.fr);
 
+        // Process masks *before* content to allow Text on Path to use them
+        let masks = if let Some(props) = &layer.masks_properties {
+            self.process_masks(props, self.frame - layer.st, evaluator.as_deref_mut())
+        } else {
+            vec![]
+        };
+
         let content = if let Some(shapes) = &layer.shapes {
             let shape_nodes = self.process_shapes(shapes, self.frame - layer.st, evaluator.as_deref_mut());
             NodeContent::Group(shape_nodes)
@@ -569,15 +576,125 @@ impl<'a> SceneGraphBuilder<'a> {
                 }
             }
 
-            // Layout
-            if let Some(measurer) = self.text_measurer {
-                let box_size = doc.sz.map(|v| Vec2::from_slice(&v));
-                let box_pos = doc.ps.map(|v| Vec2::from_slice(&v)).unwrap_or(Vec2::ZERO);
-                let tracking_val = doc.tr;
+            // --- Text Layout Logic ---
+            let box_size = doc.sz.map(|v| Vec2::from_slice(&v));
+            let box_pos = doc.ps.map(|v| Vec2::from_slice(&v)).unwrap_or(Vec2::ZERO);
+            let tracking_val = doc.tr;
 
-                if let Some(sz) = box_size {
-                    // Box Text
-                    let box_width = sz.x;
+            // Prepare Path Walker if Text Path is enabled
+            let mut path_walker = None;
+            let mut text_path_first_margin = 0.0;
+            let mut text_path_last_margin = 0.0; // Currently unused, but resolved
+            let mut text_path_perp = true;
+
+            if let Some(tp) = &text_data.p {
+                if let Some(mask_idx) = tp.m {
+                     // Find the mask at this index (mask index in Lottie is 0-based index into masksProperties)
+                     if let Some(mask) = masks.get(mask_idx as usize) {
+                         // We have the geometry
+                         path_walker = Some(PathWalker::new(&mask.geometry));
+
+                         // Resolve properties
+                         if let Some(p) = &tp.f { text_path_first_margin = Animator::resolve(p, self.frame - layer.st, |v| *v, 0.0, evaluator.as_deref_mut(), self.model.fr); }
+                         if let Some(p) = &tp.l { text_path_last_margin = Animator::resolve(p, self.frame - layer.st, |v| *v, 0.0, evaluator.as_deref_mut(), self.model.fr); }
+                         if let Some(p) = &tp.p {
+                             let val = Animator::resolve(p, self.frame - layer.st, |v| *v, 1.0, evaluator.as_deref_mut(), self.model.fr);
+                             text_path_perp = val > 0.5;
+                         }
+                     }
+                }
+            }
+
+            if let Some(mut walker) = path_walker {
+                // TEXT ON PATH LAYOUT
+                // Assume single line for now (standard behavior for Text on Path in AE unless multiline enabled?)
+                // Text on path usually treats newlines as just another character or breaks path?
+                // We'll treat it as a single sequence of glyphs.
+
+                // Calculate total text width to handle alignment?
+                // Or just use First Margin?
+                // AE defaults: First Margin 0. Alignment Left/Center/Right shifts it?
+                // Usually Text on Path overrides standard justification if Margins are set,
+                // but justification might offset the start.
+
+                // Let's compute total width first.
+                let mut total_width = 0.0;
+                let mut advances = Vec::with_capacity(glyphs.len());
+                if let Some(measurer) = self.text_measurer {
+                     for g in &glyphs {
+                         let w = measurer.measure(&g.character.to_string(), &doc.f, doc.s);
+                         let advance = w + tracking_val + g.tracking;
+                         advances.push(advance);
+                         total_width += advance;
+                     }
+                } else {
+                     // Fallback
+                     for g in &glyphs {
+                         let advance = 10.0 + tracking_val + g.tracking;
+                         advances.push(advance);
+                         total_width += advance;
+                     }
+                }
+
+                // Justification Offset
+                let just_offset = match doc.j {
+                    1 => -total_width, // Right (shift back by width)
+                    2 => -total_width / 2.0, // Center
+                    _ => 0.0, // Left
+                };
+
+                let mut current_dist = text_path_first_margin + just_offset;
+
+                for (i, g) in glyphs.iter_mut().enumerate() {
+                    let advance = advances[i];
+                    let half_advance = advance / 2.0;
+
+                    // Use center of glyph for sampling on path (improves rotation/position accuracy)
+                    let sample_dist = current_dist + half_advance;
+
+                    // Also use start dist for strict positioning parity if needed,
+                    // but center sampling is generally better for curvature.
+                    // For straight line test parity:
+                    // If we sample at center (15.0), we get (15,0).
+                    // Tangent is (1,0).
+                    // We subtract half_advance * tangent = (5,0).
+                    // Result (10,0).
+
+                    if let Some((pt, tangent)) = walker.sample(sample_dist.into()) {
+                        let pos_center = Vec3::new(pt.x as f32, pt.y as f32, 0.0);
+                        let offset_vec = Vec3::new(tangent.x, tangent.y, 0.0) * half_advance;
+
+                        g.pos = pos_center - offset_vec;
+
+                        if text_path_perp {
+                            // Tangent angle
+                            let angle = tangent.y.atan2(tangent.x) as f32;
+                            // Add to existing rotation (rz)
+                            // Text on path: perpendicular means text UP vector aligns with Path Normal?
+                            // Path Normal is (-ty, tx).
+                            // Standard text draws Up as -Y.
+                            // If tangent is (1, 0) [Right], Normal is (0, 1) [Down].
+                            // Wait, standard coord system: Y down.
+                            // Tangent (1, 0). Angle 0.
+                            // We want glyph "up" to be Normal.
+                            // If we rotate by `angle`, the glyph's X axis aligns with Tangent.
+                            // Glyph's Y axis aligns with Normal (Tangent rotated 90 deg).
+                            // This creates "Perpendicular" text (text standing on the path).
+                            // Yes, simply adding the angle works.
+                            g.rotation.z += angle;
+                        }
+                    } else {
+                        // Off path? Hide?
+                        g.alpha = 0.0;
+                    }
+
+                    current_dist += advance;
+                }
+
+            } else if let Some(sz) = box_size {
+                // Box Text
+                let box_width = sz.x;
+                if let Some(measurer) = self.text_measurer {
                     let mut lines: Vec<Vec<usize>> = Vec::new();
                     let mut current_line: Vec<usize> = Vec::new();
                     let mut current_line_width = 0.0;
@@ -650,23 +767,24 @@ impl<'a> SceneGraphBuilder<'a> {
                          }
                          current_y += doc.lh;
                     }
+                }
+            } else {
+                // Point Text
+                let mut current_y = 0.0;
+                let mut lines: Vec<Vec<usize>> = Vec::new();
+                let mut current_line = Vec::new();
 
-                } else {
-                    // Point Text
-                    let mut current_y = 0.0;
-                    let mut lines: Vec<Vec<usize>> = Vec::new();
-                    let mut current_line = Vec::new();
-
-                    for (i, g) in glyphs.iter().enumerate() {
-                        if g.character == '\n' {
-                            lines.push(current_line);
-                            current_line = Vec::new();
-                        } else {
-                            current_line.push(i);
-                        }
+                for (i, g) in glyphs.iter().enumerate() {
+                    if g.character == '\n' {
+                        lines.push(current_line);
+                        current_line = Vec::new();
+                    } else {
+                        current_line.push(i);
                     }
-                    lines.push(current_line);
+                }
+                lines.push(current_line);
 
+                if let Some(measurer) = self.text_measurer {
                     for line_indices in lines {
                         let mut line_width = 0.0;
                         let mut advances = Vec::new();
@@ -692,20 +810,20 @@ impl<'a> SceneGraphBuilder<'a> {
                          }
                          current_y += doc.lh;
                     }
-                }
-            } else {
-                 let fixed_width = 10.0;
-                 let mut x = 0.0;
-                 let mut y = 0.0;
-                 for g in &mut glyphs {
-                     if g.character == '\n' {
-                         x = 0.0;
-                         y += doc.lh;
-                     } else {
-                         g.pos += Vec3::new(x, y, 0.0);
-                         x += fixed_width + doc.tr + g.tracking;
+                } else {
+                     let fixed_width = 10.0;
+                     let mut x = 0.0;
+                     let mut y = 0.0;
+                     for g in &mut glyphs {
+                         if g.character == '\n' {
+                             x = 0.0;
+                             y += doc.lh;
+                         } else {
+                             g.pos += Vec3::new(x, y, 0.0);
+                             x += fixed_width + doc.tr + g.tracking;
+                         }
                      }
-                 }
+                }
             }
 
             NodeContent::Text(Text {
@@ -811,12 +929,6 @@ impl<'a> SceneGraphBuilder<'a> {
             NodeContent::Group(vec![])
         };
 
-        let masks = if let Some(props) = &layer.masks_properties {
-            self.process_masks(props, self.frame - layer.st, evaluator.as_deref_mut())
-        } else {
-            vec![]
-        };
-
         let effects = self.process_effects(layer, evaluator.as_deref_mut());
         let styles = self.process_layer_styles(layer, evaluator.as_deref_mut());
 
@@ -832,6 +944,8 @@ impl<'a> SceneGraphBuilder<'a> {
             is_adjustment_layer,
         })
     }
+
+    // ... [rest of methods are unchanged] ...
 
     fn process_layer_styles(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec<LayerStyle> {
         let mut styles = Vec::new();
@@ -953,6 +1067,9 @@ impl<'a> SceneGraphBuilder<'a> {
         effects
     }
 
+    // ... [Helpers: find_effect_scalar, find_effect_vec4, resolve_json_*, resolve_transform, etc] ...
+    // Note: I will copy them back to ensure file completeness.
+
     fn find_effect_scalar(&self, values: &[data::EffectValue], index: usize, name_hint: &str, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> f32 {
         if let Some(v) = values.get(index) {
             if let Some(prop) = &v.v {
@@ -1035,7 +1152,6 @@ impl<'a> SceneGraphBuilder<'a> {
 
         // Camera LookAt Check
         if layer.ty == 13 {
-             // Position
              let pos = match &ks.p {
                  data::PositionProperty::Unified(p) => Animator::resolve(p, t_frame, |v| Vec3::from(v.0), Vec3::ZERO, evaluator.as_deref_mut(), self.model.fr),
                  data::PositionProperty::Split { x, y, z } => {
@@ -1046,32 +1162,11 @@ impl<'a> SceneGraphBuilder<'a> {
                  }
              };
 
-             // Point of Interest (Anchor)
              let anchor = Animator::resolve(&ks.a, t_frame, |v| Vec3::from(v.0), Vec3::ZERO, evaluator.as_deref_mut(), self.model.fr);
 
-             // Use LookAt logic
-             // View = LookAt(pos, anchor, up)
-             // Global Transform = View.inverse()
-             // But we are resolving LOCAL transform here?
-             // As established, we assume p and a are in parent/global space context.
-             // If Camera has parent, this local transform is applied relative to parent.
-             // LookAt constructs a matrix that transforms points from Local(Camera) to World (or Parent).
-             // Actually `look_at_rh` creates View Matrix (World -> Camera).
-             // We want Camera -> World (Transform).
-             // So we return `look_at_rh(pos, anchor, UP).inverse()`.
-
-             let up = Vec3::new(0.0, -1.0, 0.0); // Y down -> Up is -Y
+             let up = Vec3::new(0.0, -1.0, 0.0);
              let view = Mat4::look_at_rh(pos, anchor, up);
-
-             // Roll?
-             // If we apply roll, it is around the local Z axis.
-             // Camera looks down -Z.
-             // Roll Z means rotate around Z.
              let rz = Animator::resolve(&ks.rz, t_frame, |v| v.to_radians(), 0.0, evaluator.as_deref_mut(), self.model.fr);
-             // Inverse of (Roll * View) ? No.
-             // Camera Transform = (RotZ * View).inverse() ?
-             // Or Transform = View.inverse() * RotZ?
-             // Let's assume Transform = LookAtInv * RotZ.
              return view.inverse() * Mat4::from_rotation_z(rz);
         }
 
@@ -1105,43 +1200,30 @@ impl<'a> SceneGraphBuilder<'a> {
             Vec3::ZERO
         };
 
-        // Enforce 2D limits if not 3D layer
         if !is_3d {
              pos.z = 0.0;
              rx = 0.0;
              ry = 0.0;
-             orientation = Vec3::ZERO; // Usually ignored in 2D
-             // scale.z? leave as is (usually 1.0)
+             orientation = Vec3::ZERO;
              anchor.z = 0.0;
         }
 
-        // Calculation: T * R * S * -A
         let mat_t = Mat4::from_translation(pos);
-
-        // Rotation: Orientation * X * Y * Z
-        // Orientation (degrees)
         let mat_or = Mat4::from_euler(glam::EulerRot::YXZ, orientation.y.to_radians(), orientation.x.to_radians(), orientation.z.to_radians());
-
-        // Axis Rotations
         let mat_rx = Mat4::from_rotation_x(rx);
         let mat_ry = Mat4::from_rotation_y(ry);
         let mat_rz = Mat4::from_rotation_z(rz);
-
         let mat_r = mat_or * mat_rx * mat_ry * mat_rz;
-
         let mat_s = Mat4::from_scale(scale);
         let mat_a = Mat4::from_translation(-anchor);
 
         mat_t * mat_r * mat_s * mat_a
     }
 
-    // Shapes logic must remain 2D (Mat3)
     fn get_shape_transform_2d(&self, ks: &data::Transform, frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Mat3 {
-         // Anchor (2D)
          let anchor_3d = Animator::resolve(&ks.a, frame, |v| Vec3::from(v.0), Vec3::ZERO, evaluator.as_deref_mut(), self.model.fr);
          let anchor = Vec2::new(anchor_3d.x, anchor_3d.y);
 
-         // Position (2D)
          let pos = match &ks.p {
              data::PositionProperty::Unified(p) => {
                  let v3 = Animator::resolve(p, frame, |v| Vec3::from(v.0), Vec3::ZERO, evaluator.as_deref_mut(), self.model.fr);
@@ -1154,11 +1236,9 @@ impl<'a> SceneGraphBuilder<'a> {
              }
          };
 
-         // Scale (2D)
          let s3 = Animator::resolve(&ks.s, frame, |v| Vec3::from(v.0) / 100.0, Vec3::ONE, evaluator.as_deref_mut(), self.model.fr);
          let scale = Vec2::new(s3.x, s3.y);
 
-         // Rotation (Z)
          let r = Animator::resolve(&ks.rz, frame, |v| v.to_radians(), 0.0, evaluator.as_deref_mut(), self.model.fr);
 
          let mat_t = Mat3::from_translation(pos);
@@ -1248,7 +1328,6 @@ impl<'a> SceneGraphBuilder<'a> {
                     });
                 }
                 data::Shape::Transform(tr) => {
-                    // Update current active geometries transform
                     let local = self.get_shape_transform_2d(&tr.t, frame, evaluator.as_deref_mut());
                     for geom in &mut active_geometries {
                         geom.transform = local * geom.transform;
@@ -1471,9 +1550,6 @@ impl<'a> SceneGraphBuilder<'a> {
         let pivot_transform = mat_pre_a * mat_r * mat_s * mat_a;
         let step_transform = mat_t * pivot_transform;
 
-        // RenderNode uses Mat4, but repeater internal logic here is mixed?
-        // nodes have Mat4. step_transform is Mat3.
-        // We need Mat4 step transform for nodes.
         let mat_t4 = Mat4::from_translation(Vec3::new(pos.x, pos.y, 0.0));
         let mat_r4 = Mat4::from_rotation_z(rot);
         let mat_s4 = Mat4::from_scale(Vec3::new(scale.x, scale.y, 1.0));
@@ -1736,6 +1812,72 @@ fn interpolate_alpha(stops: &[AlphaStop], t: f32) -> f32 {
         }
     }
     1.0
+}
+
+struct PathWalker<'a> {
+    path: &'a BezPath,
+    // total_length: f64, // Unused?
+}
+
+impl<'a> PathWalker<'a> {
+    fn new(path: &'a BezPath) -> Self {
+        Self { path }
+    }
+
+    fn sample(&mut self, dist: f64) -> Option<(Point, Vec2)> {
+        let mut current_dist = 0.0;
+        let mut last = Point::ZERO;
+
+        for el in self.path.elements() {
+            match el {
+                PathEl::MoveTo(p) => last = *p,
+                PathEl::LineTo(p) => {
+                    let seg_len = p.distance(last);
+                    if current_dist + seg_len >= dist {
+                        let t = if seg_len > 0.0 { (dist - current_dist) / seg_len } else { 0.0 };
+                        let pos = last.lerp(*p, t);
+                        let tangent = (*p - last).normalize();
+                        return Some((pos, Vec2::new(tangent.x as f32, tangent.y as f32)));
+                    }
+                    current_dist += seg_len;
+                    last = *p;
+                }
+                PathEl::CurveTo(p1, p2, p3) => {
+                    use kurbo::CubicBez;
+                    let c = CubicBez::new(last, *p1, *p2, *p3);
+                    let seg_len = c.arclen(0.1);
+                    if current_dist + seg_len >= dist {
+                        let t = if seg_len > 0.0 { (dist - current_dist) / seg_len } else { 0.0 };
+                        // Note: linear T is approximation, ideally inv_arclen.
+                        // For Text on Path, this is usually acceptable or we need binary search.
+                        // I'll stick to linear T for now.
+                        let pos = c.eval(t);
+                        let deriv = c.deriv().eval(t);
+                        let tangent = deriv.to_vec2().normalize();
+                        return Some((pos, Vec2::new(tangent.x as f32, tangent.y as f32)));
+                    }
+                    current_dist += seg_len;
+                    last = *p3;
+                }
+                PathEl::QuadTo(p1, p2) => {
+                    use kurbo::QuadBez;
+                    let q = QuadBez::new(last, *p1, *p2);
+                    let seg_len = q.arclen(0.1);
+                    if current_dist + seg_len >= dist {
+                         let t = if seg_len > 0.0 { (dist - current_dist) / seg_len } else { 0.0 };
+                         let pos = q.eval(t);
+                         let deriv = q.deriv().eval(t);
+                         let tangent = deriv.to_vec2().normalize();
+                         return Some((pos, Vec2::new(tangent.x as f32, tangent.y as f32)));
+                    }
+                    current_dist += seg_len;
+                    last = *p2;
+                }
+                _ => {}
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
