@@ -776,6 +776,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         data,
                         width: asset.w.unwrap_or(100),
                         height: asset.h.unwrap_or(100),
+                        id: Some(asset.id.clone()),
                     })
                 }
             } else {
@@ -832,7 +833,7 @@ impl<'a> SceneGraphBuilder<'a> {
         })
     }
 
-    fn process_layer_styles(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec<LayerStyle> {
+    fn process_layer_styles(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec<LayerStyle> {
         let mut styles = Vec::new();
         if let Some(sy_list) = &layer.sy {
             for sy in sy_list {
@@ -900,7 +901,7 @@ impl<'a> SceneGraphBuilder<'a> {
         styles
     }
 
-    fn process_effects(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec<Effect> {
+    fn process_effects(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec<Effect> {
         let mut effects = Vec::new();
         if let Some(ef_list) = &layer.ef {
             for ef in ef_list {
@@ -952,7 +953,7 @@ impl<'a> SceneGraphBuilder<'a> {
         effects
     }
 
-    fn find_effect_scalar(&self, values: &[data::EffectValue], index: usize, name_hint: &str, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> f32 {
+    fn find_effect_scalar(&self, values: &[data::EffectValue], index: usize, name_hint: &str, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> f32 {
         if let Some(v) = values.get(index) {
             if let Some(prop) = &v.v {
                 return self.resolve_json_scalar(prop, self.frame - layer.st, evaluator.as_deref_mut());
@@ -970,7 +971,7 @@ impl<'a> SceneGraphBuilder<'a> {
         0.0
     }
 
-    fn find_effect_vec4(&self, values: &[data::EffectValue], index: usize, name_hint: &str, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec4 {
+    fn find_effect_vec4(&self, values: &[data::EffectValue], index: usize, name_hint: &str, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec4 {
         if let Some(v) = values.get(index) {
             if let Some(prop) = &v.v {
                 return self.resolve_json_vec4(prop, self.frame - layer.st, evaluator.as_deref_mut());
@@ -988,7 +989,7 @@ impl<'a> SceneGraphBuilder<'a> {
         Vec4::ZERO
     }
 
-    fn resolve_json_scalar(&self, prop: &data::Property<serde_json::Value>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> f32 {
+    fn resolve_json_scalar(&self, prop: &data::Property<serde_json::Value>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> f32 {
         Animator::resolve(prop, frame, |v| {
             if let Some(n) = v.as_f64() { n as f32 }
             else if let Some(arr) = v.as_array() { arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32 }
@@ -996,7 +997,7 @@ impl<'a> SceneGraphBuilder<'a> {
         }, 0.0, evaluator, self.model.fr)
     }
 
-    fn resolve_json_vec4(&self, prop: &data::Property<serde_json::Value>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec4 {
+    fn resolve_json_vec4(&self, prop: &data::Property<serde_json::Value>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec4 {
         Animator::resolve(prop, frame, |v| {
             if let Some(arr) = v.as_array() {
                 let r = arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
@@ -1008,7 +1009,7 @@ impl<'a> SceneGraphBuilder<'a> {
         }, Vec4::ZERO, evaluator, self.model.fr)
     }
 
-    fn resolve_json_vec4_arr(&self, prop: &data::Property<Vec<f32>>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec4 {
+    fn resolve_json_vec4_arr(&self, prop: &data::Property<Vec<f32>>, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec4 {
         Animator::resolve(prop, frame, |v| {
             if v.len() >= 4 { Vec4::new(v[0], v[1], v[2], v[3]) }
             else if v.len() >= 3 { Vec4::new(v[0], v[1], v[2], 1.0) }
@@ -1016,7 +1017,7 @@ impl<'a> SceneGraphBuilder<'a> {
         }, Vec4::ONE, evaluator, self.model.fr)
     }
 
-    fn resolve_transform(&self, layer: &data::Layer, map: &HashMap<u32, &data::Layer>, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Mat4 {
+    fn resolve_transform(&self, layer: &data::Layer, map: &HashMap<u32, &data::Layer>, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Mat4 {
         let local = self.get_layer_transform(layer, evaluator.as_deref_mut());
         if let Some(parent_ind) = layer.parent {
             if let Some(parent) = map.get(&parent_ind) {
@@ -1026,7 +1027,7 @@ impl<'a> SceneGraphBuilder<'a> {
         local
     }
 
-    fn get_layer_transform(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Mat4 {
+    fn get_layer_transform(&self, layer: &data::Layer, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Mat4 {
         let t_frame = self.frame - layer.st;
         let ks = &layer.ks;
 
@@ -1135,7 +1136,7 @@ impl<'a> SceneGraphBuilder<'a> {
     }
 
     // Shapes logic must remain 2D (Mat3)
-    fn get_shape_transform_2d(&self, ks: &data::Transform, frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Mat3 {
+    fn get_shape_transform_2d(&self, ks: &data::Transform, frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Mat3 {
          // Anchor (2D)
          let anchor_3d = Animator::resolve(&ks.a, frame, |v| Vec3::from(v.0), Vec3::ZERO, evaluator.as_deref_mut(), self.model.fr);
          let anchor = Vec2::new(anchor_3d.x, anchor_3d.y);
@@ -1168,7 +1169,7 @@ impl<'a> SceneGraphBuilder<'a> {
          mat_t * mat_r * mat_s * mat_a
     }
 
-    fn process_shapes(&self, shapes: &'a [data::Shape], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec<RenderNode> {
+    fn process_shapes(&self, shapes: &'a [data::Shape], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec<RenderNode> {
         let mut processed_nodes = Vec::new();
         let mut active_geometries: Vec<PendingGeometry> = Vec::new();
 
@@ -1421,7 +1422,7 @@ impl<'a> SceneGraphBuilder<'a> {
         processed_nodes
     }
 
-    fn resolve_dash(&self, props: &[data::DashProperty], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Option<DashPattern> {
+    fn resolve_dash(&self, props: &[data::DashProperty], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Option<DashPattern> {
         if props.is_empty() { return None; }
         let mut array = Vec::new();
         let mut offset = 0.0;
@@ -1626,7 +1627,7 @@ impl<'a> SceneGraphBuilder<'a> {
         path
     }
 
-    fn convert_path(&self, p: &data::PathShape, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> BezPath {
+    fn convert_path(&self, p: &data::PathShape, frame: f32, #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> BezPath {
         let path_data = Animator::resolve(&p.ks, frame, |v| v.clone(), data::BezierPath::default(), evaluator, self.model.fr);
         self.convert_bezier_path(&path_data)
     }
@@ -1651,7 +1652,7 @@ impl<'a> SceneGraphBuilder<'a> {
         bp
     }
 
-    fn process_masks(&self, masks_props: &[data::MaskProperties], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] evaluator: Option<&mut ()>) -> Vec<Mask> {
+    fn process_masks(&self, masks_props: &[data::MaskProperties], frame: f32, #[cfg(feature = "expressions")] mut evaluator: Option<&mut ExpressionEvaluator>, #[cfg(not(feature = "expressions"))] mut evaluator: Option<&mut ()>) -> Vec<Mask> {
         let mut masks = Vec::new();
         for m in masks_props {
             let mode = match m.mode.as_deref() {
