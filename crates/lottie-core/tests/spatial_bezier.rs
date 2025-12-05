@@ -50,10 +50,16 @@ mod tests {
             a: 1,
             k: Value::Animated(vec![kf1, kf2]),
             ix: None,
+            x: None,
         };
 
         // Frame 5.0 is exactly 50% between 0.0 and 10.0
-        let result = Animator::resolve(&prop, 5.0, |v| Vec2::from_slice(v), Vec2::ZERO);
+        #[cfg(feature = "expressions")]
+        let evaluator = None;
+        #[cfg(not(feature = "expressions"))]
+        let evaluator = None;
+
+        let result = Animator::resolve(&prop, 5.0, |v| Vec2::from_slice(v), Vec2::ZERO, evaluator, 60.0);
 
         // Tolerance due to floating point
         assert!((result.x - 68.75).abs() < 0.001, "X should be ~68.75, got {}", result.x);

@@ -1,5 +1,9 @@
 use glam::{Vec2, Vec3, Vec4};
 use lottie_data::model::{BezierPath, Property, TextDocument, Value};
+#[cfg(feature = "expressions")]
+use crate::expressions::ExpressionEvaluator;
+#[cfg(feature = "expressions")]
+use boa_engine::{JsValue, js_string};
 
 pub trait Interpolatable: Sized + Clone {
     fn lerp(&self, other: &Self, t: f32) -> Self;
@@ -165,6 +169,135 @@ impl Interpolatable for Vec<f32> {
     }
 }
 
+// Helper to convert Interpolatable to JS Value
+#[cfg(feature = "expressions")]
+pub trait ToJsValue {
+    fn to_js_value(&self, context: &mut boa_engine::Context) -> JsValue;
+    fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> where Self: Sized;
+}
+
+#[cfg(not(feature = "expressions"))]
+pub trait ToJsValue {}
+
+#[cfg(not(feature = "expressions"))]
+impl<T> ToJsValue for T {}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for f32 {
+    fn to_js_value(&self, _context: &mut boa_engine::Context) -> JsValue {
+        JsValue::new(*self)
+    }
+    fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> {
+        v.to_number(context).ok().map(|n| n as f32)
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for Vec<f32> {
+    fn to_js_value(&self, context: &mut boa_engine::Context) -> JsValue {
+        let vals: Vec<JsValue> = self.iter().map(|f| JsValue::new(*f)).collect();
+        boa_engine::object::builtins::JsArray::from_iter(vals, context).into()
+    }
+     fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> {
+        if let Some(obj) = v.as_object() {
+            if obj.is_array() {
+                if let Ok(len_val) = obj.get(js_string!("length"), context) {
+                    if let Ok(len) = len_val.to_number(context) {
+                        let len_u64 = len as u64;
+                        let mut vec = Vec::with_capacity(len_u64 as usize);
+                        for i in 0..len_u64 {
+                            if let Ok(val) = obj.get(i, context) {
+                                if let Ok(n) = val.to_number(context) {
+                                    vec.push(n as f32);
+                                }
+                            }
+                        }
+                        return Some(vec);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for Vec2 {
+    fn to_js_value(&self, context: &mut boa_engine::Context) -> JsValue {
+        let vals = vec![JsValue::new(self.x), JsValue::new(self.y)];
+        boa_engine::object::builtins::JsArray::from_iter(vals, context).into()
+    }
+    fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> {
+        if let Some(obj) = v.as_object() {
+            if obj.is_array() {
+                let x = obj.get(0, context).ok()?.to_number(context).ok()? as f32;
+                let y = obj.get(1, context).ok()?.to_number(context).ok()? as f32;
+                return Some(Vec2::new(x, y));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for Vec3 {
+    fn to_js_value(&self, context: &mut boa_engine::Context) -> JsValue {
+        let vals = vec![JsValue::new(self.x), JsValue::new(self.y), JsValue::new(self.z)];
+        boa_engine::object::builtins::JsArray::from_iter(vals, context).into()
+    }
+    fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> {
+        if let Some(obj) = v.as_object() {
+            if obj.is_array() {
+                let x = obj.get(0, context).ok()?.to_number(context).ok()? as f32;
+                let y = obj.get(1, context).ok()?.to_number(context).ok()? as f32;
+                let z = obj.get(2, context).ok()?.to_number(context).ok()? as f32;
+                return Some(Vec3::new(x, y, z));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for Vec4 {
+    fn to_js_value(&self, context: &mut boa_engine::Context) -> JsValue {
+        let vals = vec![JsValue::new(self.x), JsValue::new(self.y), JsValue::new(self.z), JsValue::new(self.w)];
+        boa_engine::object::builtins::JsArray::from_iter(vals, context).into()
+    }
+    fn from_js_value(v: &JsValue, context: &mut boa_engine::Context) -> Option<Self> {
+        if let Some(obj) = v.as_object() {
+            if obj.is_array() {
+                let x = obj.get(0, context).ok()?.to_number(context).ok()? as f32;
+                let y = obj.get(1, context).ok()?.to_number(context).ok()? as f32;
+                let z = obj.get(2, context).ok()?.to_number(context).ok()? as f32;
+                let w = obj.get(3, context).ok()?.to_number(context).ok()? as f32;
+                return Some(Vec4::new(x, y, z, w));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for BezierPath {
+    fn to_js_value(&self, _context: &mut boa_engine::Context) -> JsValue {
+        JsValue::Undefined
+    }
+    fn from_js_value(_v: &JsValue, _context: &mut boa_engine::Context) -> Option<Self> {
+        None
+    }
+}
+
+#[cfg(feature = "expressions")]
+impl ToJsValue for TextDocument {
+    fn to_js_value(&self, _context: &mut boa_engine::Context) -> JsValue {
+        JsValue::Undefined
+    }
+    fn from_js_value(_v: &JsValue, _context: &mut boa_engine::Context) -> Option<Self> {
+        None
+    }
+}
+
 // Cubic Bezier Easing
 pub fn solve_cubic_bezier(p1: Vec2, p2: Vec2, x: f32) -> f32 {
     if x <= 0.0 {
@@ -209,11 +342,87 @@ impl Animator {
         frame: f32,
         converter: impl Fn(&T) -> U,
         default: U,
+        #[cfg(feature = "expressions")] evaluator: Option<&mut ExpressionEvaluator>,
+        #[cfg(not(feature = "expressions"))] _evaluator: Option<&mut ()>, // Dummy type
+        frame_rate: f32,
+    ) -> U
+    where
+        U: Interpolatable + 'static + ToJsValue,
+    {
+        // 1. Calculate Base Value (Keyframes)
+        let base_value = Self::resolve_keyframes(prop, frame, &converter, default.clone());
+
+        // 2. Expression Check
+        #[cfg(feature = "expressions")]
+        if let Some(expr) = &prop.x {
+            if let Some(eval) = evaluator {
+                 let context = eval.context();
+                 let js_val = base_value.to_js_value(context);
+
+                 let time = frame / frame_rate; // Seconds
+                 // We need to pass evaluator methods but we are holding context mutable borrow.
+                 // Actually evaluate takes `&mut self`. We cannot borrow context then call evaluate.
+                 // We need to finish context borrowing first.
+                 // `js_val` is `JsValue` which is Garbage Collected, so it should be fine to hold.
+
+                 // However, we need to drop `context` borrow before calling `evaluate`.
+                 // But `eval.context()` returns `&mut Context`.
+                 // We only need it to create `js_val`.
+
+                 // Refactor:
+                 // 1. Create js_val using context.
+                 // 2. Call evaluate.
+
+                 // But `evaluate` is on `ExpressionEvaluator`.
+                 // We cannot call `eval.evaluate` if we still hold `context`.
+                 // Scope it.
+
+                 // Wait, I cannot call `base_value.to_js_value(eval.context())` and then `eval.evaluate` in the same scope if `to_js_value` returns something that borrows context?
+                 // No, `JsValue` does not borrow context.
+                 // But `eval.context()` takes `&mut self`.
+                 // `eval.evaluate` takes `&mut self`.
+                 // Rust borrow checker will complain if I do:
+                 // eval.evaluate(..., base_value.to_js_value(eval.context()), ...)
+                 // Because argument evaluation happens before function call, but it's nested mutable borrows?
+                 // No, `eval.context()` borrows `eval` mutably. It returns `&mut Context`.
+                 // The borrow ends when `to_js_value` returns.
+                 // Then `eval.evaluate` borrows `eval` mutably.
+                 // This should be fine as long as they are not overlapping.
+
+                 // However, `evaluate` takes `&JsValue`.
+
+                 let js_val = {
+                     let ctx = eval.context();
+                     base_value.to_js_value(ctx)
+                 };
+
+                 match eval.evaluate(expr, &js_val, time, frame_rate) {
+                     Ok(res) => {
+                          let context = eval.context();
+                          if let Some(val) = U::from_js_value(&res, context) {
+                               return val;
+                          }
+                     },
+                     Err(_e) => {
+                         // eprintln!("Expression failed: {}", _e);
+                     }
+                 }
+            }
+        }
+
+        base_value
+    }
+
+    fn resolve_keyframes<T, U>(
+        prop: &Property<T>,
+        frame: f32,
+        converter: &impl Fn(&T) -> U,
+        default: U,
     ) -> U
     where
         U: Interpolatable,
     {
-        match &prop.k {
+         match &prop.k {
             Value::Default => default,
             Value::Static(v) => converter(v),
             Value::Animated(keyframes) => {
@@ -339,34 +548,30 @@ mod tests {
             a: 1,
             k: Value::Animated(keyframes),
             ix: None,
+            x: None,
         };
 
         let conv = |v: &f32| *v;
 
         // 1. Exact match start
-        assert_eq!(Animator::resolve(&prop, 0.0, conv, -1.0), 0.0);
+        assert_eq!(Animator::resolve(&prop, 0.0, conv, -1.0, None, 60.0), 0.0);
 
         // 2. Exact match middle
-        assert_eq!(Animator::resolve(&prop, 10.0, conv, -1.0), 10.0);
+        assert_eq!(Animator::resolve(&prop, 10.0, conv, -1.0, None, 60.0), 10.0);
 
         // 3. Exact match end
-        // At t=20, it is at the last keyframe. Existing logic treats 'after or at last' as using the End value if present.
-        // The last keyframe has s=20, e=30.
-        assert_eq!(Animator::resolve(&prop, 20.0, conv, -1.0), 30.0);
+        assert_eq!(Animator::resolve(&prop, 20.0, conv, -1.0, None, 60.0), 30.0);
 
         // 4. Before first
-        assert_eq!(Animator::resolve(&prop, -5.0, conv, -1.0), 0.0);
+        assert_eq!(Animator::resolve(&prop, -5.0, conv, -1.0, None, 60.0), 0.0);
 
         // 5. After last
-        // keyframes[2].e is 30.0.
-        assert_eq!(Animator::resolve(&prop, 25.0, conv, -1.0), 30.0);
+        assert_eq!(Animator::resolve(&prop, 25.0, conv, -1.0, None, 60.0), 30.0);
 
-        // 6. Mid-segment (linear interpolation default)
-        // t=5 (between 0 and 10). Lerp 0->10 at 0.5 -> 5.0.
-        assert_eq!(Animator::resolve(&prop, 5.0, conv, -1.0), 5.0);
+        // 6. Mid-segment
+        assert_eq!(Animator::resolve(&prop, 5.0, conv, -1.0, None, 60.0), 5.0);
 
         // 7. Mid-segment 2
-        // t=15 (between 10 and 20). Lerp 10->20 at 0.5 -> 15.0.
-        assert_eq!(Animator::resolve(&prop, 15.0, conv, -1.0), 15.0);
+        assert_eq!(Animator::resolve(&prop, 15.0, conv, -1.0, None, 60.0), 15.0);
     }
 }
