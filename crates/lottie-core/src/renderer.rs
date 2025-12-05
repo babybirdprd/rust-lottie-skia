@@ -144,6 +144,7 @@ pub struct Image {
     pub data: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
+    pub id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -14,11 +14,26 @@ use skia_safe::{
     StrokeRec, TextBlob, TileMode,
 };
 
+pub trait LottieContext: Send + Sync {
+    fn load_typeface(&self, family: &str, style: &str) -> Option<skia_safe::Typeface>;
+    fn load_image(&self, id: &str) -> Option<skia_safe::Image>;
+}
+
+// Default no-op implementation
+impl LottieContext for () {
+    fn load_typeface(&self, _family: &str, _style: &str) -> Option<skia_safe::Typeface> {
+        None
+    }
+    fn load_image(&self, _id: &str) -> Option<skia_safe::Image> {
+        None
+    }
+}
+
 pub struct SkiaRenderer;
 
 impl SkiaRenderer {
     /// Draws the computed frame onto the provided canvas.
-    pub fn draw(canvas: &Canvas, tree: &RenderTree, dest_rect: Rect, alpha: f32) {
+    pub fn draw(canvas: &Canvas, tree: &RenderTree, dest_rect: Rect, alpha: f32, ctx: &dyn LottieContext) {
         canvas.save();
 
         // 4.1 Coordinate System & Transforms
@@ -39,13 +54,13 @@ impl SkiaRenderer {
         canvas.concat_44(&m44);
 
         // Draw Root Node
-        draw_node(canvas, &tree.root, alpha);
+        draw_node(canvas, &tree.root, alpha, ctx);
 
         canvas.restore();
     }
 }
 
-fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
+fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32, ctx: &dyn LottieContext) {
     canvas.save();
 
     // Transform
@@ -110,7 +125,7 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
             canvas.save_layer(&SaveLayerRec::default().paint(&paint));
 
             // Draw Content
-            draw_content(canvas, &node.content, 1.0);
+            draw_content(canvas, &node.content, 1.0, ctx);
 
             // Matte Logic
             if let Some(matte) = &node.matte {
@@ -146,18 +161,18 @@ fn draw_node(canvas: &Canvas, node: &RenderNode, parent_alpha: f32) {
                 matte_paint.set_blend_mode(blend);
 
                 canvas.save_layer(&SaveLayerRec::default().paint(&matte_paint));
-                draw_node(canvas, &matte.node, 1.0);
+                draw_node(canvas, &matte.node, 1.0, ctx);
                 canvas.restore();
             }
 
             canvas.restore();
         } else {
             canvas.save_layer(&SaveLayerRec::default().paint(&paint));
-            draw_content(canvas, &node.content, 1.0);
+            draw_content(canvas, &node.content, 1.0, ctx);
             canvas.restore();
         }
     } else {
-        draw_content(canvas, &node.content, node_alpha);
+        draw_content(canvas, &node.content, node_alpha, ctx);
     }
 
     draw_stroke_effects(canvas, node, node_alpha);
@@ -203,11 +218,11 @@ fn draw_stroke_effects(canvas: &Canvas, node: &RenderNode, alpha: f32) {
     }
 }
 
-fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
+fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32, ctx: &dyn LottieContext) {
     match content {
         NodeContent::Group(children) => {
             for child in children {
-                draw_node(canvas, child, alpha);
+                draw_node(canvas, child, alpha, ctx);
             }
         }
         NodeContent::Shape(shape) => {
@@ -278,11 +293,15 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
             }
         }
         NodeContent::Text(text) => {
-            let font_mgr = FontMgr::new();
-            let typeface = font_mgr
-                .match_family_style(&text.font_family, FontStyle::normal())
-                .or_else(|| font_mgr.match_family_style("Arial", FontStyle::normal()))
-                .or_else(|| font_mgr.match_family_style("", FontStyle::normal()));
+            let typeface = ctx
+                .load_typeface(&text.font_family, "Normal")
+                .or_else(|| {
+                    let font_mgr = FontMgr::new();
+                    font_mgr
+                        .match_family_style(&text.font_family, FontStyle::normal())
+                        .or_else(|| font_mgr.match_family_style("Arial", FontStyle::normal()))
+                        .or_else(|| font_mgr.match_family_style("", FontStyle::normal()))
+                });
 
             if let Some(typeface) = typeface {
                 let font = Font::new(typeface, Some(text.size));
@@ -327,9 +346,10 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
         }
         NodeContent::Image(image) => {
             let mut drawn = false;
-            if let Some(data) = &image.data {
-                let sk_data = Data::new_copy(data);
-                if let Some(img) = SkImage::from_encoded(sk_data) {
+
+            // Try loading from context first if ID exists
+            if let Some(id) = &image.id {
+                if let Some(img) = ctx.load_image(id) {
                     let mut paint = Paint::default();
                     paint.set_alpha_f(alpha);
                     let src = Rect::from_wh(img.width() as f32, img.height() as f32);
@@ -343,6 +363,27 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32) {
                     drawn = true;
                 }
             }
+
+            // Fallback to embedded data
+            if !drawn {
+                if let Some(data) = &image.data {
+                    let sk_data = Data::new_copy(data);
+                    if let Some(img) = SkImage::from_encoded(sk_data) {
+                        let mut paint = Paint::default();
+                        paint.set_alpha_f(alpha);
+                        let src = Rect::from_wh(img.width() as f32, img.height() as f32);
+                        let dst = Rect::from_wh(image.width as f32, image.height as f32);
+                        canvas.draw_image_rect(
+                            img,
+                            Some((&src, skia_safe::canvas::SrcRectConstraint::Strict)),
+                            dst,
+                            &paint,
+                        );
+                        drawn = true;
+                    }
+                }
+            }
+
             if !drawn {
                 let mut paint = Paint::default();
                 paint.set_color(Color::MAGENTA);

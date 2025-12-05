@@ -17,7 +17,7 @@ fn test_render_mock_tree() {
 
     let dest_rect = Rect::from_wh(width as f32, height as f32);
 
-    SkiaRenderer::draw(canvas, &tree, dest_rect, 1.0);
+    SkiaRenderer::draw(canvas, &tree, dest_rect, 1.0, &());
 
     let image = surface.image_snapshot();
     // Use None for context as it is a raster surface

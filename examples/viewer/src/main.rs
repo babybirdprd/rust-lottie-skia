@@ -1,6 +1,6 @@
 use lottie_core::{LottiePlayer, TextMeasurer};
 use lottie_data::model::LottieJson;
-use lottie_skia::SkiaRenderer;
+use lottie_skia::{SkiaRenderer, LottieContext};
 use skia_safe::{AlphaType, ColorType, ImageInfo};
 use softbuffer::{Context, Surface as SoftSurface};
 use std::num::NonZeroU32;
@@ -104,6 +104,17 @@ impl TextMeasurer for SkiaMeasurer {
     }
 }
 
+struct ViewerContext;
+
+impl LottieContext for ViewerContext {
+    fn load_typeface(&self, _family: &str, _style: &str) -> Option<skia_safe::Typeface> {
+        None
+    }
+    fn load_image(&self, _id: &str) -> Option<skia_safe::Image> {
+        None
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
@@ -197,6 +208,7 @@ fn main() {
                                         &tree,
                                         skia_safe::Rect::from_wh(width as f32, height as f32),
                                         1.0,
+                                        &ViewerContext,
                                     );
                                 }
                             }
