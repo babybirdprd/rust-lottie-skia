@@ -143,6 +143,7 @@ where
         k: Value::Static(v),
         a: 0,
         ix: None,
+        x: None,
     }))
 }
 
@@ -482,6 +483,8 @@ pub struct Property<T> {
     pub k: Value<T>,
     #[serde(default)]
     pub ix: Option<u32>,
+    #[serde(default)]
+    pub x: Option<String>,
 }
 
 impl<T> Default for Property<T> {
@@ -490,6 +493,7 @@ impl<T> Default for Property<T> {
             a: 0,
             k: Value::Default,
             ix: None,
+            x: None,
         }
     }
 }
